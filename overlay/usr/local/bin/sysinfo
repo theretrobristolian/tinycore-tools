@@ -1,0 +1,34 @@
+#!/bin/sh
+
+echo
+echo "============================================================"
+echo "                TinyCore Tools - System Info"
+echo "============================================================"
+echo
+
+echo "Hostname:"
+hostname
+echo
+
+echo "Kernel:"
+uname -a
+echo
+
+echo "CPU:"
+grep -m 1 "model name" /proc/cpuinfo 2>/dev/null || \
+grep -m 1 "cpu" /proc/cpuinfo 2>/dev/null
+echo
+
+echo "Memory:"
+free -m
+echo
+
+echo "Network:"
+ifconfig 2>/dev/null
+echo
+
+echo "Default Route:"
+route -n 2>/dev/null
+echo
+
+echo "============================================================"
