@@ -28,7 +28,7 @@ PATCHED_INITRD="${PATCHED_DIR}/core.gz"
 
 
 # -----------------------------------------------------------------------------
-# Helper
+# Helpers
 # -----------------------------------------------------------------------------
 
 log() {
@@ -43,6 +43,140 @@ cleanup_mount() {
 }
 
 trap cleanup_mount EXIT
+
+
+# -----------------------------------------------------------------------------
+# Prerequisite check
+# -----------------------------------------------------------------------------
+
+REQUIRED_COMMANDS=(
+    wget
+    cpio
+    gzip
+    find
+    mount
+    mountpoint
+)
+
+MISSING_COMMANDS=()
+
+for cmd in "${REQUIRED_COMMANDS[@]}"; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        MISSING_COMMANDS+=("${cmd}")
+    fi
+done
+
+if (( ${#MISSING_COMMANDS[@]} > 0 )); then
+
+    log "Missing build prerequisites"
+
+    echo "The following required commands are not installed:"
+    echo
+
+    for cmd in "${MISSING_COMMANDS[@]}"; do
+        echo "  - ${cmd}"
+    done
+
+    echo
+
+    if command -v apt-get >/dev/null 2>&1; then
+
+        echo "This system appears to use APT."
+        echo
+        read -r -p "Install/update the required packages now? [Y/n]: " ANSWER
+        ANSWER="${ANSWER:-Y}"
+
+        if [[ "${ANSWER}" =~ ^[Yy]$ ]]; then
+
+            sudo apt-get update
+
+            sudo apt-get install -y \
+                wget \
+                cpio \
+                gzip \
+                findutils \
+                util-linux
+
+        else
+            echo
+            echo "Cannot continue without the required packages."
+            exit 1
+        fi
+
+    elif command -v dnf >/dev/null 2>&1; then
+
+        echo "This system appears to use DNF."
+        echo
+        read -r -p "Install the required packages now? [Y/n]: " ANSWER
+        ANSWER="${ANSWER:-Y}"
+
+        if [[ "${ANSWER}" =~ ^[Yy]$ ]]; then
+
+            sudo dnf install -y \
+                wget \
+                cpio \
+                gzip \
+                findutils \
+                util-linux
+
+        else
+            echo
+            echo "Cannot continue without the required packages."
+            exit 1
+        fi
+
+    elif command -v yum >/dev/null 2>&1; then
+
+        echo "This system appears to use YUM."
+        echo
+        read -r -p "Install the required packages now? [Y/n]: " ANSWER
+        ANSWER="${ANSWER:-Y}"
+
+        if [[ "${ANSWER}" =~ ^[Yy]$ ]]; then
+
+            sudo yum install -y \
+                wget \
+                cpio \
+                gzip \
+                findutils \
+                util-linux
+
+        else
+            echo
+            echo "Cannot continue without the required packages."
+            exit 1
+        fi
+
+    else
+
+        echo "ERROR: No supported package manager was detected."
+        echo
+        echo "Please install the following commands manually:"
+        echo
+
+        for cmd in "${MISSING_COMMANDS[@]}"; do
+            echo "  - ${cmd}"
+        done
+
+        exit 1
+
+    fi
+
+fi
+
+
+# -----------------------------------------------------------------------------
+# Verify prerequisites after installation
+# -----------------------------------------------------------------------------
+
+for cmd in "${REQUIRED_COMMANDS[@]}"; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        echo "ERROR: Required command '${cmd}' is still unavailable."
+        exit 1
+    fi
+done
+
+log "Prerequisite check passed"
 
 
 # -----------------------------------------------------------------------------
@@ -127,7 +261,7 @@ else
     cleanup_mount
 
     # -------------------------------------------------------------------------
-    # Delete ISO / scratch download data
+    # Delete ISO
     # -------------------------------------------------------------------------
 
     log "Removing downloaded ISO"
