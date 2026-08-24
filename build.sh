@@ -18,13 +18,13 @@ SCRATCH_DIR="${SCRIPT_ROOT}/tc-scratch"
 
 ISO_PATH="${SCRATCH_DIR}/${ISO_NAME}"
 ISO_MOUNT="${SCRATCH_DIR}/iso"
-INITRD_ROOT="${SCRATCH_DIR}/initrd"
 
 ORIGINAL_KERNEL="${ORIGINAL_DIR}/vmlinuz"
 ORIGINAL_INITRD="${ORIGINAL_DIR}/core.gz"
 
 PATCHED_KERNEL="${PATCHED_DIR}/vmlinuz"
 PATCHED_INITRD="${PATCHED_DIR}/core.gz"
+PATCHED_TOOLS="${PATCHED_DIR}/tools.gz"
 
 
 # -----------------------------------------------------------------------------
@@ -186,6 +186,7 @@ log "Prerequisite check passed"
 mkdir -p "${ORIGINAL_DIR}"
 mkdir -p "${PATCHED_DIR}"
 mkdir -p "${OVERLAY_DIR}"
+mkdir -p "${SCRATCH_DIR}"
 
 
 # -----------------------------------------------------------------------------
@@ -205,7 +206,6 @@ else
     log "Original Tiny Core files not found"
 
     rm -rf "${SCRATCH_DIR}"
-
     mkdir -p "${SCRATCH_DIR}"
     mkdir -p "${ISO_MOUNT}"
 
@@ -278,9 +278,7 @@ fi
 log "Preparing scratch workspace"
 
 rm -rf "${SCRATCH_DIR}"
-
 mkdir -p "${SCRATCH_DIR}"
-mkdir -p "${INITRD_ROOT}"
 
 
 # -----------------------------------------------------------------------------
@@ -294,47 +292,41 @@ mkdir -p "${PATCHED_DIR}"
 
 
 # -----------------------------------------------------------------------------
-# Unpack gold initramfs
+# Copy original Tiny Core files
 # -----------------------------------------------------------------------------
 
-log "Unpacking original core.gz"
-
-cd "${INITRD_ROOT}"
-
-gzip -dc "${ORIGINAL_INITRD}" | cpio -idmu
-
-
-# -----------------------------------------------------------------------------
-# Apply overlay
-# -----------------------------------------------------------------------------
-
-log "Applying overlay"
-
-if [[ -d "${OVERLAY_DIR}" ]]; then
-    cp -a "${OVERLAY_DIR}/." "${INITRD_ROOT}/"
-fi
-
-
-# -----------------------------------------------------------------------------
-# Rebuild patched initramfs
-# -----------------------------------------------------------------------------
-
-log "Building patched core.gz"
-
-cd "${INITRD_ROOT}"
-
-find . -print0 \
-    | cpio --null -ov --format=newc \
-    | gzip -9 > "${PATCHED_INITRD}"
-
-
-# -----------------------------------------------------------------------------
-# Copy kernel
-# -----------------------------------------------------------------------------
-
-log "Copying kernel"
+log "Copying original Tiny Core boot files"
 
 cp "${ORIGINAL_KERNEL}" "${PATCHED_KERNEL}"
+cp "${ORIGINAL_INITRD}" "${PATCHED_INITRD}"
+
+
+# -----------------------------------------------------------------------------
+# Build custom tools initramfs
+# -----------------------------------------------------------------------------
+
+log "Building tools overlay"
+
+if [[ -n "$(find "${OVERLAY_DIR}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+
+    cd "${OVERLAY_DIR}"
+
+    find . -print0 \
+        | cpio --null -ov --format=newc \
+        | gzip -9 > "${PATCHED_TOOLS}"
+
+else
+
+    echo "WARNING: overlay directory is empty."
+    echo "Creating an empty tools.gz."
+
+    cd "${SCRATCH_DIR}"
+
+    printf '' \
+        | cpio -o --format=newc \
+        | gzip -9 > "${PATCHED_TOOLS}"
+
+fi
 
 
 # -----------------------------------------------------------------------------
@@ -351,17 +343,38 @@ Do not place permanent files here.
 Repository layout:
 
 original/
-    Gold untouched Tiny Core files.
+    Gold untouched Tiny Core files:
+        vmlinuz
+        core.gz
 
 patched/
-    Final iPXE-ready build.
-    This directory is overwritten on every build.
+    Final iPXE-ready build:
+        vmlinuz
+        core.gz
+        tools.gz
 
 overlay/
-    Files to inject into the Tiny Core filesystem.
+    Files to inject into Tiny Core at boot.
+
+    The directory structure underneath overlay/ should match the
+    desired Linux filesystem structure.
+
+    Example:
+
+        overlay/etc/motd
+
+    becomes:
+
+        /etc/motd
+
+    inside Tiny Core.
 
 tc-scratch/
-    Temporary unpacked build workspace.
+    Temporary build workspace.
+
+The original Tiny Core core.gz is never unpacked or modified.
+
+tools.gz contains only the contents of overlay/.
 EOF
 
 
@@ -383,3 +396,12 @@ echo
 echo "iPXE files ready:"
 echo "  ${PATCHED_KERNEL}"
 echo "  ${PATCHED_INITRD}"
+echo "  ${PATCHED_TOOLS}"
+
+echo
+echo "Example iPXE:"
+echo
+echo "  kernel <url>/vmlinuz"
+echo "  initrd <url>/core.gz"
+echo "  initrd <url>/tools.gz"
+echo "  boot"
