@@ -1,0 +1,37 @@
+#!/bin/sh
+
+echo
+echo "============================================================"
+echo "                    TinyCore Tools"
+echo "============================================================"
+echo
+echo "Project commands:"
+echo
+echo "  help       Show this help screen"
+echo "  sysinfo    Show concise CPU, memory, kernel and network info"
+echo "  pciinfo    Show PCI hardware grouped by device type"
+echo
+echo "Included tools:"
+echo
+echo "  nano       Simple text editor"
+echo "  lspci      Show raw PCI device information"
+echo
+echo "Useful built-in commands:"
+echo
+echo "  ifconfig   Show network interfaces"
+echo "  route -n   Show routing table"
+echo "  ping       Test network connectivity"
+echo "  dmesg      Show kernel messages"
+echo "  uname -a   Show kernel/system information"
+echo "  free -m    Show memory usage"
+echo
+echo "Examples:"
+echo
+echo "  sysinfo"
+echo "  pciinfo"
+echo "  pciinfo all"
+echo "  lspci -nn"
+echo "  nano /tmp/notes.txt"
+echo
+echo "============================================================"
+echo
