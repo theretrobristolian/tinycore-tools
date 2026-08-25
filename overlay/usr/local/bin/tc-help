@@ -1,37 +1,43 @@
 #!/bin/sh
 
+LINE="============================================================"
+SUB="------------------------------------------------------------"
+
 echo
-echo "============================================================"
+echo "$LINE"
 echo "                    TinyCore Tools"
-echo "============================================================"
+echo "$LINE"
 echo
-echo "Project commands:"
+echo "Lightweight iPXE diagnostic environment"
 echo
-echo "  help       Show this help screen"
-echo "  sysinfo    Show concise CPU, memory, kernel and network info"
-echo "  pciinfo    Show PCI hardware grouped by device type"
+echo "Project commands"
+echo "$SUB"
+printf "  %-10s %s\n" "help"    "Show this help screen"
+printf "  %-10s %s\n" "sysinfo" "Show CPU, memory, kernel and active network info"
+printf "  %-10s %s\n" "pciinfo" "Show key PCI hardware grouped by device type"
 echo
-echo "Included tools:"
+echo "Included utilities"
+echo "$SUB"
+printf "  %-10s %s\n" "nano"     "Simple text editor"
+printf "  %-10s %s\n" "lspci"    "Show PCI devices"
+printf "  %-10s %s\n" "ifconfig" "Show network interfaces"
+printf "  %-10s %s\n" "route -n" "Show routing table"
+printf "  %-10s %s\n" "ping"     "Test network connectivity"
+printf "  %-10s %s\n" "dmesg"    "Show kernel messages"
+printf "  %-10s %s\n" "free -m"  "Show memory usage"
 echo
-echo "  nano       Simple text editor"
-echo "  lspci      Show raw PCI device information"
+echo "PCI examples"
+echo "$SUB"
+printf "  %-18s %s\n" "pciinfo"      "Key devices only"
+printf "  %-18s %s\n" "pciinfo all"  "Full PCI list, paged"
+printf "  %-18s %s\n" "lspci -nn"    "Raw PCI list with vendor/device IDs"
 echo
-echo "Useful built-in commands:"
-echo
-echo "  ifconfig   Show network interfaces"
-echo "  route -n   Show routing table"
-echo "  ping       Test network connectivity"
-echo "  dmesg      Show kernel messages"
-echo "  uname -a   Show kernel/system information"
-echo "  free -m    Show memory usage"
-echo
-echo "Examples:"
-echo
-echo "  sysinfo"
-echo "  pciinfo"
-echo "  pciinfo all"
-echo "  lspci -nn"
+echo "Editor example"
+echo "$SUB"
 echo "  nano /tmp/notes.txt"
 echo
-echo "============================================================"
+echo "$LINE"
+echo "Created by The Retro Bristolian"
+echo "https://github.com/theretrobristolian/tinycore-tools"
+echo "$LINE"
 echo
