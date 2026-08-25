@@ -3,10 +3,9 @@
 LINE="============================================================"
 SUB="------------------------------------------------------------"
 
-section() {
+show_group() {
     TITLE="$1"
     PATTERN="$2"
-
     RESULTS="$(lspci -nn | grep -Ei "$PATTERN" || true)"
 
     if [ -n "$RESULTS" ]; then
@@ -14,6 +13,16 @@ section() {
         echo "$SUB"
         echo "$RESULTS"
         echo
+    fi
+}
+
+page_output() {
+    if command -v less >/dev/null 2>&1; then
+        less
+    elif command -v more >/dev/null 2>&1; then
+        more
+    else
+        cat
     fi
 }
 
@@ -27,52 +36,64 @@ if ! command -v lspci >/dev/null 2>&1; then
     echo "lspci is unavailable - showing raw Linux PCI IDs."
     echo "$SUB"
 
-    FOUND=0
     for DEVICE_PATH in /sys/bus/pci/devices/*; do
         [ -d "$DEVICE_PATH" ] || continue
-        FOUND=1
-
         SLOT="$(basename "$DEVICE_PATH")"
         VENDOR="$(cat "$DEVICE_PATH/vendor" 2>/dev/null)"
         DEVICE_ID="$(cat "$DEVICE_PATH/device" 2>/dev/null)"
         CLASS="$(cat "$DEVICE_PATH/class" 2>/dev/null)"
-
         echo "$SLOT  ${VENDOR#0x}:${DEVICE_ID#0x}  Class:${CLASS#0x}"
     done
 
-    [ "$FOUND" -eq 1 ] || echo "No PCI devices detected."
     echo
-    echo "$LINE"
+echo "$LINE"
     exit 0
 fi
 
-if [ "${1:-}" = "all" ]; then
-    echo "All PCI Devices"
-    echo "$SUB"
-    lspci -nn
-    echo
-    echo "$LINE"
-    exit 0
-fi
+case "${1:-}" in
+    all)
+        {
+            echo "$LINE"
+            echo "          TinyCore Tools - Complete PCI Device List"
+            echo "$LINE"
+            echo
+            lspci -nn
+            echo
+            echo "$LINE"
+        } | page_output
+        exit 0
+        ;;
+    network|net)
+        show_group "Network" 'ethernet|network|wireless'
+        echo "$LINE"
+        exit 0
+        ;;
+    storage|disk)
+        show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
+        echo "$LINE"
+        exit 0
+        ;;
+esac
 
-section "Network" 'ethernet|network|wireless'
-section "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
-section "Display" 'vga|display|3d controller'
-section "USB" 'usb controller'
-section "Audio" 'audio|multimedia audio'
-section "Bridges / Chipset" 'host bridge|isa bridge|pci bridge|smbus'
+# Default report deliberately concentrates on devices useful during hardware
+# identification and iPXE/network troubleshooting. Bridges and chipset plumbing
+# are omitted because they tend to swamp the useful information.
+show_group "Network" 'ethernet|network|wireless'
+show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
+show_group "Display" 'vga|display|3d controller'
+show_group "USB" 'usb controller'
+show_group "Audio" 'audio|multimedia audio'
 
-OTHER="$(lspci -nn | grep -Eiv 'ethernet|network|wireless|sata|ide|raid|scsi|non-volatile|nvme|mass storage|vga|display|3d controller|usb controller|audio|multimedia audio|host bridge|isa bridge|pci bridge|smbus' || true)"
-
+OTHER="$(lspci -nn | grep -Ei 'unclassified|communication controller|serial controller|firewire|card reader|sd host|encryption controller' || true)"
 if [ -n "$OTHER" ]; then
-    echo "Other"
+    echo "Other useful devices"
     echo "$SUB"
     echo "$OTHER"
     echo
 fi
 
+echo "$SUB"
 echo "PCI IDs are shown as [vendor:device], e.g. [8086:100e]."
-echo "Run 'pciinfo all' for the complete raw PCI device list."
-echo
+echo "More: pciinfo network | pciinfo storage | pciinfo all"
 echo "$LINE"
 echo
