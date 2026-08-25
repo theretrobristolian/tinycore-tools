@@ -34,6 +34,21 @@ REFRESH=false
 
 log() { echo; echo "==> $1"; }
 cleanup_mount() { if mountpoint -q "${ISO_MOUNT}" 2>/dev/null; then sudo umount "${ISO_MOUNT}"; fi; }
+
+# ISO files/directories copied from read-only media can leave a scratch tree
+# without write permission on the directories themselves. Make any old scratch
+# tree writable before removing it so repeated builds remain one-command.
+cleanup_workspace() {
+    cleanup_mount
+
+    if [[ -e "${SCRATCH_DIR}" ]]; then
+        chmod -R u+w "${SCRATCH_DIR}" 2>/dev/null || sudo chmod -R u+w "${SCRATCH_DIR}"
+        rm -rf "${SCRATCH_DIR}"
+    fi
+
+    rm -rf "${OUTPUT_DIR}"
+}
+
 trap cleanup_mount EXIT
 
 usage() {
@@ -83,7 +98,6 @@ if [[ "$REFRESH" == true ]]; then
     exec bash "$SCRIPT_ROOT/build.sh"
 fi
 
-# xorriso creates the final bootable ISO and unsquashfs expands Tiny Core extensions.
 REQUIRED_COMMANDS=(wget cpio gzip find mount mountpoint unsquashfs xorriso)
 MISSING_COMMANDS=()
 for cmd in "${REQUIRED_COMMANDS[@]}"; do command -v "$cmd" >/dev/null 2>&1 || MISSING_COMMANDS+=("$cmd"); done
@@ -110,10 +124,8 @@ fi
 for cmd in "${REQUIRED_COMMANDS[@]}"; do command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: Required command '$cmd' is unavailable."; exit 1; }; done
 log "Prerequisite check passed"
 
-mkdir -p "$ORIGINAL_DIR" "$OUTPUT_DIR" "$OVERLAY_DIR" "$SCRATCH_DIR"
+mkdir -p "$ORIGINAL_DIR" "$OUTPUT_DIR" "$OVERLAY_DIR"
 
-# Keep the original ISO as a cache as well as the extracted kernel/initramfs.
-# It supplies Tiny Core's proven bootloader files when generating our ISO.
 if [[ ! -f "$ORIGINAL_ISO" ]]; then
     log "Downloading Tiny Core Linux ${TINYCORE_VERSION} base ISO"
     wget -O "$ORIGINAL_ISO" "${BASE_URL}/${ISO_NAME}"
@@ -121,7 +133,8 @@ fi
 
 if [[ ! -f "$ORIGINAL_KERNEL" || ! -f "$ORIGINAL_INITRD" ]]; then
     log "Extracting original Tiny Core boot files"
-    rm -rf "$ISO_MOUNT"; mkdir -p "$ISO_MOUNT"
+    cleanup_workspace
+    mkdir -p "$SCRATCH_DIR" "$ISO_MOUNT"
     sudo mount -o loop,ro "$ORIGINAL_ISO" "$ISO_MOUNT"
     KERNEL_SOURCE="$(find "$ISO_MOUNT" -type f -name vmlinuz | head -n1)"
     INITRD_SOURCE="$(find "$ISO_MOUNT" -type f -name core.gz | head -n1)"
@@ -134,7 +147,7 @@ else
 fi
 
 log "Preparing build workspace and output"
-rm -rf "$SCRATCH_DIR" "$OUTPUT_DIR"
+cleanup_workspace
 mkdir -p "$SCRATCH_DIR" "$OVERLAY_BUILD_DIR" "$EXTENSION_DIR" "$IPXE_DIR" "$ISO_OUTPUT_DIR"
 cp "$ORIGINAL_KERNEL" "$IPXE_KERNEL"
 cp "$ORIGINAL_INITRD" "$IPXE_INITRD"
@@ -166,17 +179,12 @@ log "Building tools overlay"
 cd "$OVERLAY_BUILD_DIR"
 find . -print0 | cpio --null -ov --format=newc | gzip -9 > "$IPXE_TOOLS"
 
-# Build an ISO by copying Tiny Core's own bootable ISO tree and replacing its
-# boot payload. tools.gz is appended to core.gz because the CD bootloader loads
-# a single initrd, while iPXE can load core.gz and tools.gz independently.
 log "Building bootable TinyCore Tools ISO"
 mkdir -p "$ISO_MOUNT" "$ISO_TREE"
 sudo mount -o loop,ro "$ORIGINAL_ISO" "$ISO_MOUNT"
 cp -a "$ISO_MOUNT/." "$ISO_TREE/"
 cleanup_mount
 
-# Files copied from an ISO retain the upstream read-only mode bits. Make only
-# our scratch copy writable so the kernel/initrd can be replaced safely.
 chmod -R u+w "$ISO_TREE"
 
 ISO_KERNEL="$(find "$ISO_TREE" -type f -name vmlinuz | head -n1)"
@@ -185,8 +193,6 @@ ISO_INITRD="$(find "$ISO_TREE" -type f -name core.gz | head -n1)"
 cp "$IPXE_KERNEL" "$ISO_KERNEL"
 cat "$IPXE_INITRD" "$IPXE_TOOLS" > "$ISO_INITRD"
 
-# Replay the boot metadata from the upstream Tiny Core ISO while using our
-# modified filesystem tree. This avoids hard-coding isolinux paths/flags.
 xorriso -indev "$ORIGINAL_ISO" -outdev "$OUTPUT_ISO" -map "$ISO_TREE" / -boot_image any replay >/dev/null 2>&1
 
 log "Build complete"
