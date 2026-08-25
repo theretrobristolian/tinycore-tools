@@ -2,21 +2,19 @@
 
 Lightweight Tiny Core Linux build and customisation tools for **iPXE booting, hardware discovery and basic diagnostics**.
 
-The aim of this project is to provide a very small Linux environment that can be booted entirely into RAM using iPXE and used across a wide range of x86 hardware.
-
-The project intentionally starts with the standard **32-bit Tiny Core Linux Core image** and applies a small custom overlay rather than requiring users to build a Linux distribution from scratch.
+The project provides a very small Linux environment that boots entirely into RAM using iPXE. It starts with the standard **32-bit Tiny Core Linux Core image** and adds a separate custom initramfs overlay, keeping the original Tiny Core files untouched.
 
 ## Goals
 
-`tinycore-tools` is intended to provide a simple RAM-based environment for tasks such as:
+`tinycore-tools` is intended for tasks such as:
 
 * Basic hardware identification
 * CPU and memory information
 * PCI device identification
-* Network adapter and MAC address identification
-* IP and network diagnostics
+* Network adapter, MAC and IP identification
+* Network diagnostics
 * Disk and partition identification
-* Basic access to local filesystems
+* Basic local filesystem access
 * File transfer and recovery tasks
 * Gathering information useful when troubleshooting or building iPXE environments
 
@@ -33,41 +31,37 @@ tinycore-tools/
 ├── overlay/
 │   ├── etc/
 │   │   └── motd
+│   ├── home/tc/
+│   │   └── .profile
 │   └── usr/local/bin/
-│       └── help
+│       └── sysinfo
 │
-├── examples/
-│   └── tinycore.ipxe
-│
-├── original/
+├── original/             # generated/cache - ignored by Git
 │   ├── vmlinuz
 │   └── core.gz
 │
-├── patched/
+├── patched/              # generated - ignored by Git
 │   ├── vmlinuz
-│   └── core.gz
+│   ├── core.gz
+│   └── tools.gz
 │
-└── tc-scratch/
+└── tc-scratch/           # temporary - ignored by Git
 ```
 
 ### `original/`
 
-Contains the untouched Tiny Core Linux kernel and initramfs.
-
-On the first run, `build.sh` downloads the configured Tiny Core ISO and extracts:
+Contains untouched Tiny Core boot files. On the first build, `build.sh` downloads the configured Tiny Core ISO and extracts:
 
 ```text
 vmlinuz
 core.gz
 ```
 
-These files are retained as the clean source for future builds.
-
-Subsequent builds reuse these files and do not download the ISO again.
+These files are retained locally and reused on later builds, so the ISO does not need to be downloaded every time.
 
 ### `overlay/`
 
-Contains files that will be added to or replace files within the Tiny Core initramfs.
+Contains the project's custom files. The directory structure mirrors where each file will appear inside the booted Tiny Core environment.
 
 For example:
 
@@ -81,207 +75,171 @@ becomes:
 /etc/motd
 ```
 
-inside the resulting Linux environment.
-
-Custom scripts can similarly be placed under:
+and commands placed in:
 
 ```text
 overlay/usr/local/bin/
 ```
 
+become commands available in the booted environment.
+
+The build script copies the overlay into its temporary workspace before changing command permissions, so building does not modify the tracked files in your Git working tree.
+
 ### `patched/`
 
-Contains the finished iPXE-ready build:
+Contains the finished iPXE-ready files:
 
 ```text
 patched/vmlinuz
 patched/core.gz
+patched/tools.gz
 ```
 
-This directory is regenerated each time `build.sh` runs.
+`vmlinuz` and `core.gz` remain the original Tiny Core files. `tools.gz` contains only the custom `tinycore-tools` overlay.
 
 ### `tc-scratch/`
 
-Temporary workspace used while unpacking and rebuilding the Tiny Core initramfs.
-
-This directory is disposable and should not contain permanent customisations.
+Disposable temporary workspace used during the build.
 
 ## Requirements
 
-The build script is intended to run on Linux or WSL.
+The build script is intended to run on Linux or WSL. It checks for its required utilities and, on supported package managers, offers to install missing prerequisites.
 
-Basic requirements include:
-
-```text
-bash
-wget
-gzip
-cpio
-mount
-find
-```
-
-Mounting the Tiny Core ISO during the initial build may require `sudo`.
+The initial Tiny Core ISO extraction uses a loop mount and may require `sudo`.
 
 ## Quick Start
 
 Clone the repository:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/theretrobristolian/tinycore-tools.git
 cd tinycore-tools
 ```
 
-Make the build script executable:
+Run the build through Bash:
 
 ```bash
-chmod +x build.sh
+bash build.sh
 ```
 
-Run the build:
+Using `bash build.sh` means the executable bit on the script is not required.
 
-```bash
-./build.sh
-```
+### First Build
 
-### First Run
+The first build will:
 
-The first run will:
-
-1. Download the configured Tiny Core Linux ISO.
-2. Mount the ISO.
-3. Extract `vmlinuz` and `core.gz`.
-4. Store the untouched files in `original/`.
+1. Check/install required build utilities.
+2. Download the configured Tiny Core Linux ISO.
+3. Mount the ISO.
+4. Extract `vmlinuz` and `core.gz` into `original/`.
 5. Remove the downloaded ISO.
-6. Unpack `original/core.gz`.
-7. Apply the contents of `overlay/`.
-8. Rebuild the initramfs.
-9. Place the finished files in `patched/`.
+6. Copy the original boot files into `patched/`.
+7. Package `overlay/` as `patched/tools.gz`.
 
-### Subsequent Runs
+The original `core.gz` is never unpacked or modified.
 
-If these files already exist:
+### Later Builds
 
-```text
-original/vmlinuz
-original/core.gz
+Simply run:
+
+```bash
+bash build.sh
 ```
 
-the download and extraction process is skipped.
+The cached files in `original/` are reused and only the custom overlay is rebuilt.
 
-The existing original files are reused and a new `patched/core.gz` is built from the current contents of `overlay/`.
+### Refresh From GitHub and Build
 
-This makes experimenting with changes quick while always starting from a known clean Tiny Core image.
+If the repository has been updated on GitHub and this local copy is only being used as a build machine, run:
+
+```bash
+bash build.sh --refresh
+```
+
+This will:
+
+1. Fetch the latest `main` branch from GitHub.
+2. Discard local changes to **tracked repository files**.
+3. Preserve `original/`, `patched/` and `tc-scratch/`.
+4. Restart the latest version of `build.sh`.
+5. Build a fresh `tools.gz`.
+
+This avoids the previous `git reset`, `git clean`, `git pull`, `chmod` sequence and, importantly, preserves the cached Tiny Core files in `original/`.
+
+> `--refresh` intentionally discards local changes to tracked files. Use it on a build copy where GitHub is the source of truth.
 
 ## iPXE
 
-Copy the contents of:
+Copy the contents of `patched/` to a directory available from your iPXE HTTP server.
 
-```text
-patched/
-```
-
-to a directory accessible from your iPXE HTTP server.
-
-A minimal iPXE configuration looks like:
+A minimal entry is:
 
 ```ipxe
 :tiny-core
-echo Booting Tiny Core Tools...
-kernel ${base-url}livecd/tiny-core/boot/vmlinuz   || goto failed
-initrd ${base-url}livecd/tiny-core/boot/core.gz   || goto failed
-boot                                              || goto failed
+echo Booting TinyCore Tools...
+kernel ${base-url}livecd/tiny-core/boot/vmlinuz quiet loglevel=3 || goto failed
+initrd ${base-url}livecd/tiny-core/boot/core.gz                 || goto failed
+initrd ${base-url}livecd/tiny-core/boot/tools.gz                || goto failed
+boot                                                             || goto failed
 ```
 
-Adjust the paths to match your environment.
+The base Tiny Core initramfs is loaded first, followed by the project overlay.
 
-## Initial Commands
+## Current Customisation
 
-The standard Tiny Core environment already provides enough functionality for some basic diagnostics.
+The current overlay provides:
 
-Examples include:
+* A `TinyCore Tools` login banner.
+* A compact `tc:~$` shell prompt.
+* `sysinfo` for concise CPU, architecture, memory, kernel and active network information.
+
+Example:
+
+```bash
+sysinfo
+```
+
+The standard Tiny Core environment also provides commands such as:
 
 ```bash
 uname -a
-```
-
-Display kernel and architecture information.
-
-```bash
 free -m
-```
-
-Display available memory.
-
-```bash
 cat /proc/cpuinfo
-```
-
-Display CPU information.
-
-```bash
 ifconfig
-```
-
-Display network interfaces, IP addresses and MAC addresses.
-
-```bash
 route -n
-```
-
-Display the routing table.
-
-```bash
 ping google.com
 ```
 
-Test network connectivity and DNS resolution.
-
 ## Development Approach
 
-Changes should generally be made under:
+Permanent project changes belong under `overlay/`. Generated files under `original/`, `patched/` and `tc-scratch/` are deliberately excluded from Git.
+
+The build model is:
 
 ```text
-overlay/
+original/vmlinuz + original/core.gz
+                 +
+              overlay/
+                 │
+                 ▼
+        patched/vmlinuz
+        patched/core.gz
+        patched/tools.gz
 ```
 
-rather than directly modifying the generated filesystem under `tc-scratch/`.
-
-The intended workflow is:
-
-```text
-original/core.gz
-       │
-       ▼
-   unpack
-       │
-       ▼
- apply overlay/
-       │
-       ▼
-    rebuild
-       │
-       ▼
-patched/core.gz
-```
-
-This keeps the original Tiny Core image untouched and makes every customised build reproducible.
+This keeps upstream Tiny Core pristine and makes the custom layer small and reproducible.
 
 ## Planned Functionality
 
 Future additions may include:
 
-* Friendly boot banner and help system
-* Hardware summary command
-* PCI device enumeration
-* PCI vendor/device ID reporting
+* Help command
+* PCI device enumeration and vendor/device IDs
 * Network adapter identification
-* MAC and IP address summary
 * Storage device identification
 * FAT/FAT32/NTFS filesystem access
 * Automatic detection of Windows partitions
-* HTTP file download
-* File upload to a deployment server
+* HTTP file download/upload
 * NFS/SMB network access
 * Additional network diagnostics
 * Information useful for identifying NICs and preparing iPXE ROM builds
@@ -290,8 +248,6 @@ The intention is not to turn Tiny Core into a full rescue distribution. Features
 
 ## Tiny Core Linux
 
-This project uses Tiny Core Linux as its base operating system.
-
-Tiny Core Linux is a separate project and is not included in this repository. The required base image is downloaded from the Tiny Core Linux project during the initial build.
+This project uses Tiny Core Linux as its base operating system. Tiny Core Linux is a separate project and is not included in this repository. The required base image is downloaded from the Tiny Core Linux project during the initial build.
 
 The Tiny Core version used by the build can be configured in `build.sh`.
