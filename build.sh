@@ -175,6 +175,10 @@ sudo mount -o loop,ro "$ORIGINAL_ISO" "$ISO_MOUNT"
 cp -a "$ISO_MOUNT/." "$ISO_TREE/"
 cleanup_mount
 
+# Files copied from an ISO retain the upstream read-only mode bits. Make only
+# our scratch copy writable so the kernel/initrd can be replaced safely.
+chmod -R u+w "$ISO_TREE"
+
 ISO_KERNEL="$(find "$ISO_TREE" -type f -name vmlinuz | head -n1)"
 ISO_INITRD="$(find "$ISO_TREE" -type f -name core.gz | head -n1)"
 [[ -n "$ISO_KERNEL" && -n "$ISO_INITRD" ]] || { echo "ERROR: Could not locate boot payload in ISO tree."; exit 1; }
