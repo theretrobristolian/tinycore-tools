@@ -68,7 +68,6 @@ Options:
 EOF
 }
 
-# Recursively resolve one Tiny Core extension and its dependencies.
 queue_extension() {
     local extension="$1"
     local existing dep_file dependency
@@ -93,7 +92,6 @@ queue_extension() {
     fi
 }
 
-# Cache an upstream ISO and extract its gold kernel/initramfs once.
 prepare_original() {
     local arch="$1"
     local iso_url="$2"
@@ -216,8 +214,6 @@ build_arch() {
         find . -print0 | cpio --null -ov --format=newc | gzip -9 > "${output_tools}"
     )
 
-    # Reuse the upstream ISO's own bootloader metadata. The custom tools archive
-    # is concatenated to the base initramfs for optical/USB ISO booting.
     log "Building bootable ISO (${arch})"
 
     mkdir -p "${iso_mount}" "${iso_tree}"
@@ -237,12 +233,28 @@ build_arch() {
     cp "${output_kernel}" "${iso_kernel}"
     cat "${output_initrd}" "${output_tools}" > "${iso_initrd}"
 
-    xorriso \
-        -indev "${source_iso}" \
-        -outdev "${output_iso}" \
-        -map "${iso_tree}" / \
-        -boot_image any replay \
-        >/dev/null 2>&1
+    # Tiny Core's documented remastering layout uses ISOLINUX. Build through
+    # xorriso's mkisofs-compatible mode instead of replaying the source ISO's
+    # boot catalogue after modifying the tree. Keep xorriso output visible so
+    # any future ISO error is immediately obvious rather than silently exiting.
+    if [[ ! -f "${iso_tree}/boot/isolinux/isolinux.bin" ]]; then
+        echo "ERROR: ${arch} ISO does not contain boot/isolinux/isolinux.bin"
+        exit 1
+    fi
+
+    rm -f "${iso_tree}/boot/isolinux/boot.cat"
+
+    xorriso -as mkisofs \
+        -iso-level 3 \
+        -full-iso9660-filenames \
+        -volid "TC_TOOLS_${arch^^}" \
+        -eltorito-boot boot/isolinux/isolinux.bin \
+        -eltorito-catalog boot/isolinux/boot.cat \
+        -no-emul-boot \
+        -boot-load-size 4 \
+        -boot-info-table \
+        -output "${output_iso}" \
+        "${iso_tree}"
 }
 
 # -----------------------------------------------------------------------------
@@ -321,14 +333,10 @@ log "Prerequisite check passed"
 
 mkdir -p "${ORIGINAL_DIR}" "${OVERLAY_DIR}"
 
-# Remove only generated scratch/output. Cached upstream files are retained.
 cleanup_workspace
 mkdir -p "${SCRATCH_DIR}" "${OUTPUT_DIR}" "${IPXE_DIR}" "${ISO_OUTPUT_DIR}"
 
-# x86 = maximum legacy compatibility.
 prepare_original "x86" "${X86_ISO_URL}" "vmlinuz" "core.gz"
-
-# amd64 = CorePure64 for x86-64/UEFI systems.
 prepare_original "amd64" "${AMD64_ISO_URL}" "vmlinuz64" "corepure64.gz"
 
 build_arch "x86"   "x86"    "vmlinuz"   "core.gz"       "tools.gz"   "tinycore-tools-x86.iso"
