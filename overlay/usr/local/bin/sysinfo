@@ -2,47 +2,102 @@
 
 . /usr/local/lib/tc-ui.sh
 
-echo
-tc_rule '='
-tc_center "TinyCore Tools - System Information"
-tc_rule '='
-echo
+read_dmi() {
+    FILE="/sys/class/dmi/id/$1"
+    if [ -r "$FILE" ]; then
+        VALUE="$(cat "$FILE" 2>/dev/null | tr -d '\r\n')"
+        [ -n "$VALUE" ] && { printf '%s' "$VALUE"; return; }
+    fi
+    printf 'Unknown'
+}
 
-CPU="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
-[ -z "$CPU" ] && CPU="$(grep -m1 'cpu' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
-echo "CPU      : ${CPU:-Unknown}"
-echo "Arch     : $(uname -m)"
+show_header() {
+    echo
+    tc_rule '='
+    tc_center "TinyCore Tools - System Information"
+    tc_rule '='
+    echo
+}
 
-MEM_KB="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')"
-if [ -n "$MEM_KB" ]; then echo "Memory   : $((MEM_KB / 1024)) MB"; else echo "Memory   : Unknown"; fi
-echo "Kernel   : $(uname -r)"
+show_system() {
+    echo "System"
+    tc_rule '-'
+    printf '%-13s: %s\n' "Manufacturer" "$(read_dmi sys_vendor)"
+    printf '%-13s: %s\n' "Model" "$(read_dmi product_name)"
+    printf '%-13s: %s\n' "Serial" "$(read_dmi product_serial)"
+    echo
 
-echo
-echo "Network"
-tc_rule '-'
+    echo "BIOS"
+    tc_rule '-'
+    printf '%-13s: %s\n' "Vendor" "$(read_dmi bios_vendor)"
+    printf '%-13s: %s\n' "Version" "$(read_dmi bios_version)"
+    printf '%-13s: %s\n' "Date" "$(read_dmi bios_date)"
+    echo
 
-INTERFACE="$(route -n 2>/dev/null | awk '$1 == "0.0.0.0" {print $8; exit}')"
-if [ -z "$INTERFACE" ]; then
-    for IFACE_PATH in /sys/class/net/*; do
-        NAME="$(basename "$IFACE_PATH")"
-        [ "$NAME" = "lo" ] && continue
-        [ "$NAME" = "dummy0" ] && continue
-        IP="$(ifconfig "$NAME" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
-        if [ -n "$IP" ]; then INTERFACE="$NAME"; break; fi
-    done
-fi
+    CPU="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
+    [ -z "$CPU" ] && CPU="$(grep -m1 'cpu' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
+    MEM_KB="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')"
 
-if [ -n "$INTERFACE" ]; then
-    echo "Interface: $INTERFACE"
-    if [ -f "/sys/class/net/$INTERFACE/address" ]; then echo "MAC      : $(cat "/sys/class/net/$INTERFACE/address")"; else echo "MAC      : Unknown"; fi
-    IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
-    if [ -n "$IP" ]; then echo "IP       : $IP"; else echo "IP       : Not configured"; fi
-    GATEWAY="$(route -n 2>/dev/null | awk -v iface="$INTERFACE" '$1 == "0.0.0.0" && $8 == iface {print $2; exit}')"
-    if [ -n "$GATEWAY" ]; then echo "Gateway  : $GATEWAY"; else echo "Gateway  : None"; fi
+    echo "Hardware"
+    tc_rule '-'
+    printf '%-13s: %s\n' "CPU" "${CPU:-Unknown}"
+    printf '%-13s: %s\n' "Arch" "$(uname -m)"
+    if [ -n "$MEM_KB" ]; then printf '%-13s: %s MB\n' "Memory" "$((MEM_KB / 1024))"; else printf '%-13s: Unknown\n' "Memory"; fi
+    printf '%-13s: %s\n' "Kernel" "$(uname -r)"
+    echo
+}
+
+show_board_network() {
+    echo "Motherboard"
+    tc_rule '-'
+    printf '%-13s: %s\n' "Manufacturer" "$(read_dmi board_vendor)"
+    printf '%-13s: %s\n' "Model" "$(read_dmi board_name)"
+    printf '%-13s: %s\n' "Version" "$(read_dmi board_version)"
+    echo
+
+    echo "Network"
+    tc_rule '-'
+
+    INTERFACE="$(route -n 2>/dev/null | awk '$1 == "0.0.0.0" {print $8; exit}')"
+    if [ -z "$INTERFACE" ]; then
+        for IFACE_PATH in /sys/class/net/*; do
+            NAME="$(basename "$IFACE_PATH")"
+            [ "$NAME" = "lo" ] && continue
+            [ "$NAME" = "dummy0" ] && continue
+            IP="$(ifconfig "$NAME" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
+            if [ -n "$IP" ]; then INTERFACE="$NAME"; break; fi
+        done
+    fi
+
+    if [ -n "$INTERFACE" ]; then
+        printf '%-13s: %s\n' "Interface" "$INTERFACE"
+        if [ -f "/sys/class/net/$INTERFACE/address" ]; then printf '%-13s: %s\n' "MAC" "$(cat "/sys/class/net/$INTERFACE/address")"; else printf '%-13s: Unknown\n' "MAC"; fi
+        IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
+        if [ -n "$IP" ]; then printf '%-13s: %s\n' "IP" "$IP"; else printf '%-13s: Not configured\n' "IP"; fi
+        GATEWAY="$(route -n 2>/dev/null | awk -v iface="$INTERFACE" '$1 == "0.0.0.0" && $8 == iface {print $2; exit}')"
+        if [ -n "$GATEWAY" ]; then printf '%-13s: %s\n' "Gateway" "$GATEWAY"; else printf '%-13s: None\n' "Gateway"; fi
+    else
+        echo "No active network interface detected."
+    fi
+
+    echo
+    tc_rule '='
+    echo
+}
+
+ROWS="$(tc_rows)"
+
+# The complete report is about 34 lines. On taller terminals show it in one go;
+# on classic 25-line VGA consoles split it into two deliberate screens.
+if [ "$ROWS" -ge 38 ]; then
+    show_header
+    show_system
+    show_board_network
 else
-    echo "No active network interface detected."
+    show_header
+    show_system
+    tc_pause
+    clear
+    show_header
+    show_board_network
 fi
-
-echo
-tc_rule '='
-echo
