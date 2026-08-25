@@ -16,6 +16,7 @@ TINYCORE_EXTENSIONS=(
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORIGINAL_DIR="${SCRIPT_ROOT}/original"
+CACHE_DIR="${SCRIPT_ROOT}/cache"
 OUTPUT_DIR="${SCRIPT_ROOT}/output"
 IPXE_DIR="${OUTPUT_DIR}/ipxe"
 ISO_OUTPUT_DIR="${OUTPUT_DIR}/iso"
@@ -64,7 +65,7 @@ EOF
 
 queue_extension() {
     local extension="$1"
-    local existing dep_file dependency
+    local existing dep_file dependency cache_dep
 
     extension="${extension%.tcz}"
     [[ -n "${extension}" ]] || return 0
@@ -74,16 +75,24 @@ queue_extension() {
     done
 
     TCZ_QUEUE+=("${extension}")
+
+    cache_dep="${ACTIVE_CACHE_DIR}/${extension}.tcz.dep"
     dep_file="${ACTIVE_EXTENSION_DIR}/${extension}.tcz.dep"
 
-    if wget -q -O "${dep_file}" "${ACTIVE_TCZ_URL}/${extension}.tcz.dep"; then
-        while IFS= read -r dependency || [[ -n "${dependency}" ]]; do
-            dependency="${dependency//$'\r'/}"
-            [[ -n "${dependency}" ]] && queue_extension "${dependency}"
-        done < "${dep_file}"
+    if [[ -f "${cache_dep}" ]]; then
+        cp "${cache_dep}" "${dep_file}"
+    elif wget -q -O "${cache_dep}.tmp" "${ACTIVE_TCZ_URL}/${extension}.tcz.dep"; then
+        mv "${cache_dep}.tmp" "${cache_dep}"
+        cp "${cache_dep}" "${dep_file}"
     else
-        rm -f "${dep_file}"
+        rm -f "${cache_dep}.tmp"
+        return 0
     fi
+
+    while IFS= read -r dependency || [[ -n "${dependency}" ]]; do
+        dependency="${dependency//$'\r'/}"
+        [[ -n "${dependency}" ]] && queue_extension "${dependency}"
+    done < "${dep_file}"
 }
 
 prepare_original() {
@@ -134,13 +143,15 @@ prepare_overlay_with_extensions() {
     local repo_arch="$2"
     local overlay_build="$3"
     local extension_dir="$4"
-    local extension tcz_file extract_dir
+    local extension tcz_file extract_dir cache_file
 
     mkdir -p "${overlay_build}" "${extension_dir}"
     cp -a "${OVERLAY_DIR}/." "${overlay_build}/"
 
     ACTIVE_TCZ_URL="http://tinycorelinux.net/${TINYCORE_BRANCH}/${repo_arch}/tcz"
     ACTIVE_EXTENSION_DIR="${extension_dir}"
+    ACTIVE_CACHE_DIR="${CACHE_DIR}/${arch}/tcz"
+    mkdir -p "${ACTIVE_CACHE_DIR}"
     TCZ_QUEUE=()
 
     log "Resolving Tiny Core extensions (${arch})"
@@ -152,14 +163,22 @@ prepare_overlay_with_extensions() {
     echo "Extensions to include (${arch}):"
     printf '  - %s\n' "${TCZ_QUEUE[@]}"
 
-    log "Downloading and extracting Tiny Core extensions (${arch})"
+    log "Preparing Tiny Core extensions (${arch})"
 
     for extension in "${TCZ_QUEUE[@]}"; do
+        cache_file="${ACTIVE_CACHE_DIR}/${extension}.tcz"
         tcz_file="${extension_dir}/${extension}.tcz"
         extract_dir="${extension_dir}/${extension}"
 
-        echo "  ${extension}.tcz"
-        wget -q -O "${tcz_file}" "${ACTIVE_TCZ_URL}/${extension}.tcz"
+        if [[ -f "${cache_file}" ]]; then
+            echo "  ${extension}.tcz (cached)"
+        else
+            echo "  ${extension}.tcz (downloading)"
+            wget -q -O "${cache_file}.tmp" "${ACTIVE_TCZ_URL}/${extension}.tcz"
+            mv "${cache_file}.tmp" "${cache_file}"
+        fi
+
+        cp "${cache_file}" "${tcz_file}"
         mkdir -p "${extract_dir}"
         unsquashfs -f -d "${extract_dir}" "${tcz_file}" >/dev/null
         cp -a "${extract_dir}/." "${overlay_build}/"
@@ -224,10 +243,7 @@ build_iso_from_tree() {
         "${iso_tree}"
 }
 
-# x86 keeps the known-good split-initrd design:
-#   pristine core.gz + separate tools.gz
 build_x86() {
-    local arch="x86"
     local source_dir="${ORIGINAL_DIR}/x86"
     local work_root="${SCRATCH_DIR}/x86"
     local overlay_build="${work_root}/overlay-build"
@@ -246,30 +262,18 @@ build_x86() {
     log "Building tools overlay (x86)"
     (
         cd "${overlay_build}"
-        find . -print0 \
-            | cpio --null -o --format=newc --quiet \
-            | gzip -9 > "${output_dir}/tools.gz"
+        find . -print0 | cpio --null -o --format=newc --quiet | gzip -9 > "${output_dir}/tools.gz"
     )
 
-    # For ISO boot, preserve the upstream core.gz bytes and append the project
-    # archive as a second compressed initramfs member.
     cat "${output_dir}/core.gz" "${output_dir}/tools.gz" > "${iso_initrd}"
 
     build_iso_from_tree \
-        "x86" \
-        "${source_dir}/base.iso" \
-        "vmlinuz" \
-        "core.gz" \
-        "${output_dir}/vmlinuz" \
-        "${iso_initrd}" \
-        "${ISO_OUTPUT_DIR}/tinycore-tools-x86.iso" \
-        "${work_root}"
+        "x86" "${source_dir}/base.iso" "vmlinuz" "core.gz" \
+        "${output_dir}/vmlinuz" "${iso_initrd}" \
+        "${ISO_OUTPUT_DIR}/tinycore-tools-x86.iso" "${work_root}"
 }
 
-# amd64 keeps the known-good UEFI boot syntax but uses one customised
-# CorePure64 initramfs.
 build_amd64() {
-    local arch="amd64"
     local source_dir="${ORIGINAL_DIR}/amd64"
     local work_root="${SCRATCH_DIR}/amd64"
     local initrd_root="${work_root}/initrd-root"
@@ -297,25 +301,14 @@ build_amd64() {
     log "Building merged initramfs (amd64)"
     (
         cd "${initrd_root}"
-        find . -print0 \
-            | cpio --null -o --format=newc --quiet \
-            | gzip -9 > "${output_dir}/corepure64.gz"
+        find . -print0 | cpio --null -o --format=newc --quiet | gzip -9 > "${output_dir}/corepure64.gz"
     )
 
     build_iso_from_tree \
-        "amd64" \
-        "${source_dir}/base.iso" \
-        "vmlinuz64" \
-        "corepure64.gz" \
-        "${output_dir}/vmlinuz64" \
-        "${output_dir}/corepure64.gz" \
-        "${ISO_OUTPUT_DIR}/tinycore-tools-amd64.iso" \
-        "${work_root}"
+        "amd64" "${source_dir}/base.iso" "vmlinuz64" "corepure64.gz" \
+        "${output_dir}/vmlinuz64" "${output_dir}/corepure64.gz" \
+        "${ISO_OUTPUT_DIR}/tinycore-tools-amd64.iso" "${work_root}"
 }
-
-# -----------------------------------------------------------------------------
-# Arguments / refresh
-# -----------------------------------------------------------------------------
 
 while (( $# > 0 )); do
     case "$1" in
@@ -338,10 +331,6 @@ if [[ "${REFRESH}" == true ]]; then
     git -C "${SCRIPT_ROOT}" reset --hard origin/main
     exec bash "${SCRIPT_ROOT}/build.sh"
 fi
-
-# -----------------------------------------------------------------------------
-# Prerequisites
-# -----------------------------------------------------------------------------
 
 REQUIRED_COMMANDS=(wget cpio gzip find mount mountpoint unsquashfs xorriso)
 MISSING_COMMANDS=()
@@ -383,11 +372,7 @@ done
 
 log "Prerequisite check passed"
 
-# -----------------------------------------------------------------------------
-# Build
-# -----------------------------------------------------------------------------
-
-mkdir -p "${ORIGINAL_DIR}" "${OVERLAY_DIR}"
+mkdir -p "${ORIGINAL_DIR}" "${CACHE_DIR}" "${OVERLAY_DIR}"
 cleanup_workspace
 mkdir -p "${SCRATCH_DIR}" "${OUTPUT_DIR}" "${IPXE_DIR}" "${ISO_OUTPUT_DIR}"
 
@@ -396,10 +381,6 @@ prepare_original "amd64" "${AMD64_ISO_URL}" "vmlinuz64" "corepure64.gz"
 
 build_x86
 build_amd64
-
-# -----------------------------------------------------------------------------
-# Finished
-# -----------------------------------------------------------------------------
 
 log "Build complete"
 
@@ -435,7 +416,10 @@ echo
 echo "Boot design:"
 echo "  x86   : pristine core.gz + separate tools.gz (known-good legacy BIOS path)"
 echo "  amd64 : customised corepure64.gz with minimal proven UEFI/iPXE syntax"
-
+echo
+echo "Extension cache:"
+echo "  ${CACHE_DIR}/x86/tcz"
+echo "  ${CACHE_DIR}/amd64/tcz"
 echo
 echo "To sync from GitHub and rebuild:"
 echo "  bash build.sh --refresh"
