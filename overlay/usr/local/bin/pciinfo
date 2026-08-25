@@ -13,22 +13,43 @@ page_output() {
     fi
 }
 
+format_devices() {
+    # Convert long lspci lines into compact two-line records.  This avoids the
+    # terminal wrapping a device description or PCI ID halfway through a word.
+    while IFS= read -r ENTRY; do
+        [ -n "$ENTRY" ] || continue
+
+        SLOT="$(printf '%s\n' "$ENTRY" | awk '{print $1}')"
+        CLASS="$(printf '%s\n' "$ENTRY" | sed -E 's/^[^ ]+ (.*) \[[0-9a-fA-F]{4}\]: .*/\1/')"
+        PCI_ID="$(printf '%s\n' "$ENTRY" | grep -oE '\[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]' | tail -n 1 | tr -d '[]')"
+
+        DESCRIPTION="$(printf '%s\n' "$ENTRY" \
+            | sed -E 's/^[^ ]+ .* \[[0-9a-fA-F]{4}\]: //' \
+            | sed -E 's/ \[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]( \(rev [^)]+\))?$//')"
+
+        printf '  %-9s %s\n' "$SLOT" "$CLASS"
+        printf '            %s\n' "$DESCRIPTION"
+        if [ -n "$PCI_ID" ]; then
+            printf '            PCI ID: %s\n' "$PCI_ID"
+        fi
+        echo
+    done
+}
+
 show_group() {
     TITLE="$1"
     PATTERN="$2"
-
     RESULTS="$(lspci -nn | grep -Ei "$PATTERN" || true)"
 
     echo "$TITLE"
     echo "$SUB"
 
     if [ -n "$RESULTS" ]; then
-        echo "$RESULTS"
+        printf '%s\n' "$RESULTS" | format_devices
     else
-        echo "None detected."
+        echo "  None detected."
+        echo
     fi
-
-    echo
 }
 
 show_header() {
@@ -41,8 +62,7 @@ show_header() {
 
 show_footer() {
     echo "$SUB"
-    echo "PCI IDs are shown as [vendor:device], e.g. [8086:100e]."
-    echo "More: pciinfo network|storage|display|usb|audio|all"
+    echo "More: pciinfo network | storage | display | usb | audio | all"
     echo "$LINE"
     echo
 }
@@ -59,10 +79,11 @@ if ! command -v lspci >/dev/null 2>&1; then
         VENDOR="$(cat "$DEVICE_PATH/vendor" 2>/dev/null)"
         DEVICE_ID="$(cat "$DEVICE_PATH/device" 2>/dev/null)"
         CLASS="$(cat "$DEVICE_PATH/class" 2>/dev/null)"
-        echo "$SLOT  ${VENDOR#0x}:${DEVICE_ID#0x}  Class:${CLASS#0x}"
+        printf '  %s\n' "$SLOT"
+        printf '    PCI ID: %s:%s\n' "${VENDOR#0x}" "${DEVICE_ID#0x}"
+        printf '    Class:  %s\n\n' "${CLASS#0x}"
     done
 
-    echo
     echo "$LINE"
     exit 0
 fi
@@ -71,27 +92,22 @@ case "${1:-}" in
     network|net)
         show_group "Network" 'ethernet|network|wireless'
         show_footer
-        exit 0
         ;;
     storage|disk)
         show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
         show_footer
-        exit 0
         ;;
     display|video|gpu)
         show_group "Display" 'vga|display|3d controller'
         show_footer
-        exit 0
         ;;
     usb)
         show_group "USB" 'usb controller'
         show_footer
-        exit 0
         ;;
     audio|sound)
         show_group "Audio" 'audio|multimedia audio'
         show_footer
-        exit 0
         ;;
     all)
         {
@@ -99,20 +115,14 @@ case "${1:-}" in
             echo "          TinyCore Tools - Complete PCI Device List"
             echo "$LINE"
             echo
-            lspci -nn
-            echo
+            lspci -nn | format_devices
             echo "$LINE"
         } | page_output
-        exit 0
         ;;
     "")
-        # Default view is intentionally tiny. For the main project use case,
-        # the network controller ID is the most useful information, followed
-        # by storage hardware when working with local disks.
         show_group "Network" 'ethernet|network|wireless'
         show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
         show_footer
-        exit 0
         ;;
     *)
         echo "Unknown category: $1"
