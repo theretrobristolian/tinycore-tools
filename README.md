@@ -2,13 +2,19 @@
 
 Lightweight Tiny Core Linux build and customisation tools for **iPXE booting, hardware discovery and basic diagnostics**.
 
-The project provides a very small 32-bit Linux environment that boots entirely into RAM. A single build now produces both **iPXE boot files** and a **bootable ISO**, making the same diagnostic environment usable on systems with or without PXE capability.
+TinyCore Tools now builds two versions of the same RAM-resident diagnostic environment:
+
+* **x86** — maximum compatibility with older 32-bit/legacy BIOS hardware
+* **amd64 / CorePure64** — modern x86-64 systems, including UEFI iPXE booting
+
+The same project overlay supplies the banner, prompt and diagnostic tools to both builds.
 
 ## Current Status
 
 The environment is working on real hardware and currently provides:
 
-* iPXE and bootable ISO output from the same build
+* x86 and amd64 iPXE payloads from one build
+* x86 and amd64 bootable ISO output
 * Dynamic console-width banner and UI formatting
 * Compact `tc:` shell prompt
 * `help`, `sysinfo` and `pciinfo` commands
@@ -18,10 +24,10 @@ The environment is working on real hardware and currently provides:
 * Categorised PCI views and paged full PCI output
 * `nano` text editor
 * `pciutils` / `lspci`
-* Automatic Tiny Core extension dependency resolution
+* Architecture-specific Tiny Core extension dependency resolution
 * One-command Git refresh and rebuild workflow
 
-The emphasis remains **small, simple, reproducible and useful on old hardware**.
+The emphasis remains **small, simple, reproducible and useful on old hardware** without sacrificing modern UEFI support.
 
 ## Repository Structure
 
@@ -39,14 +45,22 @@ tinycore-tools/
 │       │   └── tc-help
 │       └── lib/
 │           └── tc-ui.sh
-├── original/             # cached upstream Tiny Core files
-├── output/               # generated final artifacts
+├── original/
+│   ├── x86/              # cached upstream x86 ISO/kernel/initramfs
+│   └── amd64/            # cached upstream CorePure64 files
+├── output/
 │   ├── ipxe/
-│   │   ├── vmlinuz
-│   │   ├── core.gz
-│   │   └── tools.gz
+│   │   ├── x86/
+│   │   │   ├── vmlinuz
+│   │   │   ├── core.gz
+│   │   │   └── tools.gz
+│   │   └── amd64/
+│   │       ├── vmlinuz64
+│   │       ├── corepure64.gz
+│   │       └── tools64.gz
 │   └── iso/
-│       └── tinycore-tools.iso
+│       ├── tinycore-tools-x86.iso
+│       └── tinycore-tools-amd64.iso
 └── tc-scratch/           # temporary build workspace
 ```
 
@@ -62,7 +76,7 @@ bash build.sh
 
 The script checks its prerequisites and can offer to install missing packages on supported Linux distributions.
 
-The first build downloads and caches the Tiny Core base ISO. Later builds reuse it.
+The first build downloads and caches both upstream Tiny Core base ISOs. Later builds reuse them.
 
 To force-sync tracked files from GitHub and immediately rebuild:
 
@@ -77,28 +91,35 @@ bash build.sh --refresh
 Every successful build creates:
 
 ```text
-output/ipxe/vmlinuz
-output/ipxe/core.gz
-output/ipxe/tools.gz
-output/iso/tinycore-tools.iso
+output/
+├── ipxe/
+│   ├── x86/
+│   │   ├── vmlinuz
+│   │   ├── core.gz
+│   │   └── tools.gz
+│   └── amd64/
+│       ├── vmlinuz64
+│       ├── corepure64.gz
+│       └── tools64.gz
+└── iso/
+    ├── tinycore-tools-x86.iso
+    └── tinycore-tools-amd64.iso
 ```
 
-The iPXE output keeps the upstream `core.gz` untouched and loads the custom environment separately as `tools.gz`.
+The iPXE builds keep the upstream base initramfs separate and load the TinyCore Tools environment as a second initramfs archive.
 
-For the ISO, the same `tools.gz` is appended to the Tiny Core initramfs and packaged using the boot metadata from the upstream Tiny Core ISO. This keeps the CD/USB and network-booted environments functionally aligned.
-
-The ISO can be burned to optical media or written to suitable bootable media using normal ISO imaging software.
+The ISO builds append the matching tools overlay to the matching Tiny Core initramfs and reuse the boot metadata from that architecture's upstream ISO.
 
 ## Tiny Core Extensions
 
-`build.sh` currently bakes these Tiny Core extensions into `tools.gz`:
+`build.sh` currently includes:
 
 ```bash
 nano
 pciutils
 ```
 
-Dependencies are resolved recursively from `.tcz.dep`, downloaded, extracted and merged into the temporary overlay. Extensions increase RAM/download requirements, so additions should remain purposeful.
+Dependencies are resolved recursively from the **matching Tiny Core architecture repository**, downloaded, extracted and merged into the temporary overlay. This is done independently for x86 and x86_64 so binary extensions are never mixed between architectures.
 
 ## Commands
 
@@ -149,26 +170,46 @@ Long device descriptions are formatted into short records for narrow legacy cons
 
 ## iPXE Boot
 
-Copy `output/ipxe/` to your iPXE HTTP server:
+Copy the contents of `output/ipxe/` to your web server, preserving the `x86` and `amd64` directories.
+
+TinyCore Tools can then use the same `${buildarch}` approach commonly used for architecture-aware WinPE/iPXE environments:
 
 ```ipxe
 :tiny-core
 echo Booting TinyCore Tools...
-kernel ${base-url}livecd/tiny-core/boot/vmlinuz quiet loglevel=3 || goto failed
-initrd ${base-url}livecd/tiny-core/boot/core.gz                 || goto failed
-initrd ${base-url}livecd/tiny-core/boot/tools.gz                || goto failed
-boot                                                             || goto failed
+
+iseq ${buildarch} x86_64 && goto tiny-core-amd64 ||
+iseq ${buildarch} x86    && goto tiny-core-x86   ||
+iseq ${buildarch} i386   && goto tiny-core-x86   ||
+goto failed
+
+:tiny-core-x86
+kernel ${base-url}livecd/tiny-core/x86/vmlinuz quiet loglevel=3 || goto failed
+initrd ${base-url}livecd/tiny-core/x86/core.gz                    || goto failed
+initrd ${base-url}livecd/tiny-core/x86/tools.gz                   || goto failed
+boot                                                               || goto failed
+
+:tiny-core-amd64
+kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 initrd=corepure64.gz initrd=tools64.gz quiet loglevel=3 || goto failed
+initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz corepure64.gz || goto failed
+initrd ${base-url}livecd/tiny-core/amd64/tools64.gz tools64.gz       || goto failed
+boot                                                                  || goto failed
 ```
+
+This keeps old x86/BIOS hardware on the lightweight 32-bit Tiny Core kernel while x86-64/UEFI systems receive CorePure64.
 
 ## ISO Boot
 
-The build also produces:
+The build produces two ISO images:
 
 ```text
-output/iso/tinycore-tools.iso
+output/iso/tinycore-tools-x86.iso
+output/iso/tinycore-tools-amd64.iso
 ```
 
-This provides a route into TinyCore Tools on hardware that cannot PXE boot. It can then be used to run `sysinfo` and `pciinfo`, identify the NIC and investigate PXE/iPXE support.
+Use the x86 image when maximum old-hardware compatibility is required. Use the amd64/CorePure64 image for modern 64-bit systems and UEFI-capable hardware.
+
+These provide a route into TinyCore Tools on machines that cannot PXE boot and can be written to suitable USB/optical media using normal ISO imaging software.
 
 ## Useful Commands
 
@@ -214,7 +255,7 @@ The intention is not to turn Tiny Core into a full rescue distribution. Features
 
 ## Tiny Core Linux
 
-Tiny Core Linux is a separate project. The base image and selected extensions are downloaded from the Tiny Core Linux project during the build.
+Tiny Core Linux is a separate project. The base images and selected extensions are downloaded from the Tiny Core Linux project during the build.
 
 ---
 
