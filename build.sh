@@ -6,8 +6,6 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 TINYCORE_BRANCH="17.x"
 
-# Use the current release aliases so the x86 and x86_64 builds remain aligned
-# within the selected Tiny Core major branch.
 X86_ISO_URL="http://tinycorelinux.net/${TINYCORE_BRANCH}/x86/release/Core-current.iso"
 AMD64_ISO_URL="http://tinycorelinux.net/${TINYCORE_BRANCH}/x86_64/release/CorePure64-current.iso"
 
@@ -140,8 +138,7 @@ build_arch() {
     local repo_arch="$2"
     local kernel_name="$3"
     local initrd_name="$4"
-    local tools_name="$5"
-    local iso_name="$6"
+    local iso_name="$5"
 
     local arch_original="${ORIGINAL_DIR}/${arch}"
     local source_iso="${arch_original}/base.iso"
@@ -149,7 +146,7 @@ build_arch() {
     local source_initrd="${arch_original}/${initrd_name}"
 
     local arch_scratch="${SCRATCH_DIR}/${arch}"
-    local overlay_build="${arch_scratch}/overlay-build"
+    local initrd_root="${arch_scratch}/initrd-root"
     local extension_dir="${arch_scratch}/extensions"
     local iso_mount="${arch_scratch}/iso-mount"
     local iso_tree="${arch_scratch}/iso-tree"
@@ -158,15 +155,34 @@ build_arch() {
     local output_iso="${ISO_OUTPUT_DIR}/${iso_name}"
     local output_kernel="${arch_ipxe}/${kernel_name}"
     local output_initrd="${arch_ipxe}/${initrd_name}"
-    local output_tools="${arch_ipxe}/${tools_name}"
 
     local extension tcz_file extract_dir iso_kernel iso_initrd
 
     log "Building TinyCore Tools (${arch})"
 
-    mkdir -p "${overlay_build}" "${extension_dir}" "${arch_ipxe}" "${ISO_OUTPUT_DIR}"
+    mkdir -p "${initrd_root}" "${extension_dir}" "${arch_ipxe}" "${ISO_OUTPUT_DIR}"
 
-    cp -a "${OVERLAY_DIR}/." "${overlay_build}/"
+    # -------------------------------------------------------------------------
+    # Unpack the real Tiny Core initramfs first.
+    # -------------------------------------------------------------------------
+
+    log "Unpacking base initramfs (${arch})"
+
+    (
+        cd "${initrd_root}"
+        gzip -dc "${source_initrd}" | cpio -idmu --quiet
+    )
+
+    # -------------------------------------------------------------------------
+    # Add the project overlay directly into the base initramfs.
+    # -------------------------------------------------------------------------
+
+    log "Applying TinyCore Tools overlay (${arch})"
+    cp -a "${OVERLAY_DIR}/." "${initrd_root}/"
+
+    # -------------------------------------------------------------------------
+    # Resolve and merge architecture-specific Tiny Core extensions.
+    # -------------------------------------------------------------------------
 
     ACTIVE_TCZ_URL="http://tinycorelinux.net/${TINYCORE_BRANCH}/${repo_arch}/tcz"
     ACTIVE_EXTENSION_DIR="${extension_dir}"
@@ -181,7 +197,7 @@ build_arch() {
     echo "Extensions to include (${arch}):"
     printf '  - %s\n' "${TCZ_QUEUE[@]}"
 
-    log "Downloading and extracting Tiny Core extensions (${arch})"
+    log "Downloading and merging Tiny Core extensions (${arch})"
 
     for extension in "${TCZ_QUEUE[@]}"; do
         tcz_file="${extension_dir}/${extension}.tcz"
@@ -191,28 +207,37 @@ build_arch() {
         wget -q -O "${tcz_file}" "${ACTIVE_TCZ_URL}/${extension}.tcz"
         mkdir -p "${extract_dir}"
         unsquashfs -f -d "${extract_dir}" "${tcz_file}" >/dev/null
-        cp -a "${extract_dir}/." "${overlay_build}/"
+        cp -a "${extract_dir}/." "${initrd_root}/"
     done
+
+    # -------------------------------------------------------------------------
+    # Permissions and final merged initramfs.
+    # -------------------------------------------------------------------------
 
     log "Preparing file permissions (${arch})"
 
-    if [[ -d "${overlay_build}/usr/local/bin" ]]; then
-        find "${overlay_build}/usr/local/bin" -type f -exec chmod 0755 {} +
+    if [[ -d "${initrd_root}/usr/local/bin" ]]; then
+        find "${initrd_root}/usr/local/bin" -type f -exec chmod 0755 {} +
     fi
 
-    if [[ -f "${overlay_build}/home/tc/.profile" ]]; then
-        chmod 0644 "${overlay_build}/home/tc/.profile"
+    if [[ -f "${initrd_root}/home/tc/.profile" ]]; then
+        chmod 0644 "${initrd_root}/home/tc/.profile"
     fi
 
-    log "Building tools overlay (${arch})"
+    log "Building merged initramfs (${arch})"
 
     cp "${source_kernel}" "${output_kernel}"
-    cp "${source_initrd}" "${output_initrd}"
 
     (
-        cd "${overlay_build}"
-        find . -print0 | cpio --null -ov --format=newc | gzip -9 > "${output_tools}"
+        cd "${initrd_root}"
+        find . -print0 \
+            | cpio --null -o --format=newc --quiet \
+            | gzip -9 > "${output_initrd}"
     )
+
+    # -------------------------------------------------------------------------
+    # Build ISO using the exact same merged initramfs as iPXE.
+    # -------------------------------------------------------------------------
 
     log "Building bootable ISO (${arch})"
 
@@ -231,12 +256,8 @@ build_arch() {
     [[ -n "${iso_initrd}" ]] || { echo "ERROR: Could not locate ${initrd_name} in ${arch} ISO tree."; exit 1; }
 
     cp "${output_kernel}" "${iso_kernel}"
-    cat "${output_initrd}" "${output_tools}" > "${iso_initrd}"
+    cp "${output_initrd}" "${iso_initrd}"
 
-    # Tiny Core's documented remastering layout uses ISOLINUX. Build through
-    # xorriso's mkisofs-compatible mode instead of replaying the source ISO's
-    # boot catalogue after modifying the tree. Keep xorriso output visible so
-    # any future ISO error is immediately obvious rather than silently exiting.
     if [[ ! -f "${iso_tree}/boot/isolinux/isolinux.bin" ]]; then
         echo "ERROR: ${arch} ISO does not contain boot/isolinux/isolinux.bin"
         exit 1
@@ -339,8 +360,8 @@ mkdir -p "${SCRATCH_DIR}" "${OUTPUT_DIR}" "${IPXE_DIR}" "${ISO_OUTPUT_DIR}"
 prepare_original "x86" "${X86_ISO_URL}" "vmlinuz" "core.gz"
 prepare_original "amd64" "${AMD64_ISO_URL}" "vmlinuz64" "corepure64.gz"
 
-build_arch "x86"   "x86"    "vmlinuz"   "core.gz"       "tools.gz"   "tinycore-tools-x86.iso"
-build_arch "amd64" "x86_64" "vmlinuz64" "corepure64.gz" "tools64.gz" "tinycore-tools-amd64.iso"
+build_arch "x86"   "x86"    "vmlinuz"   "core.gz"       "tinycore-tools-x86.iso"
+build_arch "amd64" "x86_64" "vmlinuz64" "corepure64.gz" "tinycore-tools-amd64.iso"
 
 # -----------------------------------------------------------------------------
 # Finished
@@ -366,15 +387,13 @@ cat <<'EOF'
 
   :tiny-core-x86
   kernel ${base-url}livecd/tiny-core/x86/vmlinuz quiet loglevel=3 || goto failed
-  initrd ${base-url}livecd/tiny-core/x86/core.gz                    || goto failed
-  initrd ${base-url}livecd/tiny-core/x86/tools.gz                   || goto failed
+  initrd ${base-url}livecd/tiny-core/x86/core.gz core.gz            || goto failed
   boot                                                               || goto failed
 
   :tiny-core-amd64
-  kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 initrd=corepure64.gz initrd=tools64.gz quiet loglevel=3 || goto failed
-  initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz corepure64.gz || goto failed
-  initrd ${base-url}livecd/tiny-core/amd64/tools64.gz tools64.gz       || goto failed
-  boot                                                                  || goto failed
+  kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 initrd=corepure64.gz quiet loglevel=3 || goto failed
+  initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz corepure64.gz                       || goto failed
+  boot                                                                                       || goto failed
 EOF
 
 echo
