@@ -4,11 +4,27 @@ Lightweight Tiny Core Linux build and customisation tools for **iPXE booting, ha
 
 The project provides a very small Linux environment that boots entirely into RAM using iPXE. It starts with the standard **32-bit Tiny Core Linux Core image** and adds a separate custom initramfs overlay, keeping the original Tiny Core files untouched.
 
-## Goals
+## v1 Status
 
-`tinycore-tools` is intended for basic hardware identification, PCI/network discovery, network diagnostics, storage/file access and other lightweight tasks useful when troubleshooting or building iPXE environments.
+The initial v1 environment is now working on real hardware.
 
-The emphasis is on keeping the environment **small, simple and easy to reproduce**.
+Current features include:
+
+* RAM-based Tiny Core Linux boot environment
+* iPXE boot support
+* Dynamic console-width banner and UI formatting
+* Compact `tc:` shell prompt
+* `help` command
+* `sysinfo` hardware/network summary
+* `pciinfo` PCI hardware reporting with readable PCI vendor/device IDs
+* Categorised PCI views such as `pciinfo network` and `pciinfo storage`
+* Paged full PCI output with `pciinfo all`
+* `nano` text editor
+* `pciutils` / `lspci`
+* Automatic Tiny Core extension dependency resolution during build
+* One-command Git refresh and rebuild workflow
+
+The emphasis remains **small, simple, reproducible and useful on old hardware**.
 
 ## Repository Structure
 
@@ -20,10 +36,13 @@ tinycore-tools/
 ├── overlay/
 │   ├── etc/motd
 │   ├── home/tc/.profile
-│   └── usr/local/bin/
-│       ├── help
-│       ├── pciinfo
-│       └── sysinfo
+│   └── usr/local/
+│       ├── bin/
+│       │   ├── pciinfo
+│       │   ├── sysinfo
+│       │   └── tc-help
+│       └── lib/
+│           └── tc-ui.sh
 ├── original/             # generated/cache - ignored by Git
 ├── patched/              # generated - ignored by Git
 └── tc-scratch/           # temporary - ignored by Git
@@ -47,20 +66,11 @@ To force-sync tracked files from GitHub and immediately rebuild:
 bash build.sh --refresh
 ```
 
-`--refresh` intentionally discards local changes to tracked repository files, while preserving generated/cache directories such as `original/`.
+`--refresh` intentionally discards local changes to tracked repository files while preserving generated/cache directories such as `original/`.
 
-## Overlay Model
+## Build Model
 
-Files under `overlay/` mirror their destination inside Tiny Core. For example:
-
-```text
-overlay/etc/motd                 -> /etc/motd
-overlay/usr/local/bin/sysinfo    -> /usr/local/bin/sysinfo
-```
-
-The build script works on a temporary copy, so setting command permissions does not dirty the Git working tree.
-
-The finished files are:
+Files under `overlay/` mirror their destination inside Tiny Core. The build script works on a temporary copy, adds configured Tiny Core extensions, and produces:
 
 ```text
 patched/vmlinuz
@@ -70,35 +80,39 @@ patched/tools.gz
 
 The upstream `core.gz` remains untouched. Project files and bundled extensions live in `tools.gz`.
 
+```text
+original/vmlinuz + original/core.gz
+                 +
+              overlay/
+                 +
+        configured .tcz extensions
+                 │
+                 ▼
+        patched/vmlinuz
+        patched/core.gz
+        patched/tools.gz
+```
+
 ## Tiny Core Extensions
 
 `build.sh` can bake standard Tiny Core `.tcz` extensions directly into `tools.gz`.
 
-Configured extensions are listed near the top of the script:
+Configured extensions currently include:
 
 ```bash
-TINYCORE_EXTENSIONS=(
-    nano
-    pciutils
-)
+nano
+pciutils
 ```
 
-For each configured extension the build automatically reads its `.tcz.dep` file, recursively resolves dependencies, downloads the required `.tcz` packages, extracts them with `unsquashfs`, and merges them into the temporary overlay.
-
-This keeps the iPXE boot simple while allowing useful Tiny Core software to be added without committing binaries to this repository.
-
-Current bundled extensions provide:
-
-* `nano` - simple console text editor.
-* `pciutils` - provides `lspci` and friendly PCI device reporting.
+The build recursively resolves `.tcz.dep` dependencies, downloads the required extensions, extracts them with `unsquashfs`, and merges them into the temporary overlay.
 
 Extensions increase `tools.gz` and RAM usage, so additions should remain purposeful.
 
-## Current Commands
+## Commands
 
 ### `help`
 
-Displays the project commands, useful built-in commands and examples.
+Displays the project command summary, included utilities, examples and project information.
 
 ### `sysinfo`
 
@@ -115,15 +129,39 @@ Displays a concise summary of:
 
 ### `pciinfo`
 
-Displays PCI hardware and PCI vendor/device IDs. When `pciutils` is available it uses:
+The default report deliberately shows only the most immediately useful PCI hardware:
 
 ```bash
-lspci -nn
+pciinfo
 ```
 
-and separately highlights network devices. A `/sys/bus/pci` fallback remains in the script so raw IDs can still be reported without `lspci`.
+* Network controllers
+* Storage controllers
+* PCI vendor/device IDs
 
-## iPXE
+Additional views are available on demand:
+
+```bash
+pciinfo network
+pciinfo storage
+pciinfo display
+pciinfo usb
+pciinfo audio
+pciinfo all
+```
+
+The output is formatted into short records so long hardware descriptions do not split awkwardly across narrow legacy consoles.
+
+PCI IDs such as:
+
+```text
+1969:2060
+8086:0083
+```
+
+can be used to identify the exact network hardware and are useful when investigating or building an iPXE option ROM for a specific NIC.
+
+## iPXE Boot
 
 Copy the contents of `patched/` to your iPXE HTTP server.
 
@@ -142,6 +180,9 @@ boot                                                             || goto failed
 help
 sysinfo
 pciinfo
+pciinfo network
+pciinfo storage
+pciinfo all
 lspci -nn
 nano /tmp/notes.txt
 ifconfig
@@ -151,33 +192,48 @@ uname -a
 free -m
 ```
 
-## Development Approach
+## Future Direction
 
-Permanent project changes belong under `overlay/`. Generated files under `original/`, `patched/` and `tc-scratch/` are excluded from Git.
+Potential follow-on work includes:
 
-The build model is:
+* Build a bootable TinyCore Tools ISO for machines that cannot PXE boot
+* USB/floppy boot images for legacy systems
+* Assisted iPXE ROM identification/build workflow using detected PCI IDs
+* Storage device and partition summaries
+* FAT/FAT32/NTFS access
+* Automatic Windows partition detection
+* HTTP file transfer
+* NFS/SMB network access
+* Additional network/NIC diagnostics
+
+A useful future workflow is therefore:
 
 ```text
-original/vmlinuz + original/core.gz
-                 +
-              overlay/
-                 +
-        configured .tcz extensions
-                 │
-                 ▼
-        patched/vmlinuz
-        patched/core.gz
-        patched/tools.gz
+Machine cannot PXE boot
+        │
+        ▼
+Boot TinyCore Tools from CD/USB
+        │
+        ▼
+Run pciinfo
+        │
+        ▼
+Identify wired NIC PCI vendor/device ID
+        │
+        ▼
+Build/test the matching iPXE ROM
+        │
+        ▼
+Machine can PXE/iPXE boot directly
 ```
-
-This keeps upstream Tiny Core pristine and makes the custom layer reproducible.
-
-## Planned Functionality
-
-Future additions may include storage device identification, FAT/FAT32/NTFS access, automatic Windows partition detection, HTTP file transfer, NFS/SMB network access and further network/NIC diagnostics useful for preparing iPXE ROM builds.
 
 The intention is not to turn Tiny Core into a full rescue distribution. Features should remain focused on **small, useful diagnostic and recovery tasks while keeping RAM and download requirements as low as practical**.
 
 ## Tiny Core Linux
 
 Tiny Core Linux is a separate project and is not included in this repository. The base image and selected extensions are downloaded from the Tiny Core Linux project during the build.
+
+---
+
+Created by **The Retro Bristolian**  
+https://github.com/theretrobristolian/tinycore-tools
