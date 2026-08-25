@@ -6,21 +6,34 @@ echo "             TinyCore Tools - System Information"
 echo "============================================================"
 echo
 
+# -----------------------------------------------------------------------------
 # CPU
-CPU="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
+# -----------------------------------------------------------------------------
+
+CPU="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null \
+    | cut -d: -f2- \
+    | sed 's/^ *//')"
 
 if [ -z "$CPU" ]; then
-    CPU="$(grep -m1 'cpu' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
+    CPU="$(grep -m1 'cpu' /proc/cpuinfo 2>/dev/null \
+        | cut -d: -f2- \
+        | sed 's/^ *//')"
 fi
 
 echo "CPU      : ${CPU:-Unknown}"
 
+# -----------------------------------------------------------------------------
 # Architecture
+# -----------------------------------------------------------------------------
+
 ARCH="$(uname -m)"
 echo "Arch     : $ARCH"
 
+# -----------------------------------------------------------------------------
 # Memory
-MEM_KB="$(grep MemTotal /proc/meminfo | awk '{print $2}')"
+# -----------------------------------------------------------------------------
+
+MEM_KB="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')"
 
 if [ -n "$MEM_KB" ]; then
     MEM_MB=$((MEM_KB / 1024))
@@ -29,24 +42,54 @@ else
     echo "Memory   : Unknown"
 fi
 
+# -----------------------------------------------------------------------------
 # Kernel
+# -----------------------------------------------------------------------------
+
 echo "Kernel   : $(uname -r)"
+
+# -----------------------------------------------------------------------------
+# Network
+# -----------------------------------------------------------------------------
 
 echo
 echo "Network"
 echo "------------------------------------------------------------"
 
-# Find first non-loopback interface
 INTERFACE=""
 
-for IFACE in /sys/class/net/*; do
-    NAME="$(basename "$IFACE")"
+# First preference:
+# Find the interface being used by the default route.
+INTERFACE="$(route -n 2>/dev/null \
+    | awk '$1 == "0.0.0.0" {print $8; exit}')"
 
-    if [ "$NAME" != "lo" ]; then
-        INTERFACE="$NAME"
-        break
-    fi
-done
+# Second preference:
+# Find the first non-loopback interface with an IPv4 address.
+if [ -z "$INTERFACE" ]; then
+
+    for IFACE_PATH in /sys/class/net/*; do
+
+        NAME="$(basename "$IFACE_PATH")"
+
+        [ "$NAME" = "lo" ] && continue
+        [ "$NAME" = "dummy0" ] && continue
+
+        IP="$(ifconfig "$NAME" 2>/dev/null \
+            | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' \
+            | head -n1)"
+
+        if [ -n "$IP" ]; then
+            INTERFACE="$NAME"
+            break
+        fi
+
+    done
+
+fi
+
+# -----------------------------------------------------------------------------
+# Display selected interface
+# -----------------------------------------------------------------------------
 
 if [ -n "$INTERFACE" ]; then
 
@@ -56,6 +99,8 @@ if [ -n "$INTERFACE" ]; then
     if [ -f "/sys/class/net/$INTERFACE/address" ]; then
         MAC="$(cat "/sys/class/net/$INTERFACE/address")"
         echo "MAC      : $MAC"
+    else
+        echo "MAC      : Unknown"
     fi
 
     # IPv4 address
@@ -71,7 +116,8 @@ if [ -n "$INTERFACE" ]; then
 
     # Default gateway
     GATEWAY="$(route -n 2>/dev/null \
-        | awk '$1 == "0.0.0.0" {print $2; exit}')"
+        | awk -v iface="$INTERFACE" \
+          '$1 == "0.0.0.0" && $8 == iface {print $2; exit}')"
 
     if [ -n "$GATEWAY" ]; then
         echo "Gateway  : $GATEWAY"
@@ -81,9 +127,10 @@ if [ -n "$INTERFACE" ]; then
 
 else
 
-    echo "No network interface detected."
+    echo "No active network interface detected."
 
 fi
 
 echo
 echo "============================================================"
+echo
