@@ -1,40 +1,34 @@
 #!/bin/sh
 
-echo
-echo "============================================================"
-echo "              TinyCore Tools - PCI Information"
-echo "============================================================"
-echo
+LINE="============================================================"
+SUB="------------------------------------------------------------"
 
-if command -v lspci >/dev/null 2>&1; then
+section() {
+    TITLE="$1"
+    PATTERN="$2"
 
-    echo "PCI Devices"
-    echo "------------------------------------------------------------"
-    lspci -nn
+    RESULTS="$(lspci -nn | grep -Ei "$PATTERN" || true)"
 
-    echo
-    echo "Network Devices"
-    echo "------------------------------------------------------------"
-
-    NETWORK_DEVICES="$(lspci -nn | grep -Ei 'ethernet|network|wireless' || true)"
-
-    if [ -n "$NETWORK_DEVICES" ]; then
-        echo "$NETWORK_DEVICES"
-    else
-        echo "No PCI network devices identified."
+    if [ -n "$RESULTS" ]; then
+        echo "$TITLE"
+        echo "$SUB"
+        echo "$RESULTS"
+        echo
     fi
+}
 
-else
+echo
+echo "$LINE"
+echo "              TinyCore Tools - PCI Information"
+echo "$LINE"
+echo
 
-    echo "lspci is unavailable - showing raw Linux PCI data."
-    echo
-    echo "PCI Devices"
-    echo "------------------------------------------------------------"
+if ! command -v lspci >/dev/null 2>&1; then
+    echo "lspci is unavailable - showing raw Linux PCI IDs."
+    echo "$SUB"
 
     FOUND=0
-
     for DEVICE_PATH in /sys/bus/pci/devices/*; do
-
         [ -d "$DEVICE_PATH" ] || continue
         FOUND=1
 
@@ -43,16 +37,42 @@ else
         DEVICE_ID="$(cat "$DEVICE_PATH/device" 2>/dev/null)"
         CLASS="$(cat "$DEVICE_PATH/class" 2>/dev/null)"
 
-        echo "$SLOT  Vendor:${VENDOR#0x} Device:${DEVICE_ID#0x} Class:${CLASS#0x}"
+        echo "$SLOT  ${VENDOR#0x}:${DEVICE_ID#0x}  Class:${CLASS#0x}"
     done
 
-    if [ "$FOUND" -eq 0 ]; then
-        echo "No PCI devices detected."
-    fi
+    [ "$FOUND" -eq 1 ] || echo "No PCI devices detected."
+    echo
+    echo "$LINE"
+    exit 0
 fi
 
+if [ "${1:-}" = "all" ]; then
+    echo "All PCI Devices"
+    echo "$SUB"
+    lspci -nn
+    echo
+    echo "$LINE"
+    exit 0
+fi
+
+section "Network" 'ethernet|network|wireless'
+section "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
+section "Display" 'vga|display|3d controller'
+section "USB" 'usb controller'
+section "Audio" 'audio|multimedia audio'
+section "Bridges / Chipset" 'host bridge|isa bridge|pci bridge|smbus'
+
+OTHER="$(lspci -nn | grep -Eiv 'ethernet|network|wireless|sata|ide|raid|scsi|non-volatile|nvme|mass storage|vga|display|3d controller|usb controller|audio|multimedia audio|host bridge|isa bridge|pci bridge|smbus' || true)"
+
+if [ -n "$OTHER" ]; then
+    echo "Other"
+    echo "$SUB"
+    echo "$OTHER"
+    echo
+fi
+
+echo "PCI IDs are shown as [vendor:device], e.g. [8086:100e]."
+echo "Run 'pciinfo all' for the complete raw PCI device list."
 echo
-echo "Tip: PCI IDs such as 8086:100e can be used to identify exact hardware."
-echo
-echo "============================================================"
+echo "$LINE"
 echo
