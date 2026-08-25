@@ -2,33 +2,88 @@
 
 echo
 echo "============================================================"
-echo "                TinyCore Tools - System Info"
+echo "             TinyCore Tools - System Information"
 echo "============================================================"
 echo
 
-echo "Hostname:"
-hostname
-echo
+# CPU
+CPU="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
 
-echo "Kernel:"
-uname -a
-echo
+if [ -z "$CPU" ]; then
+    CPU="$(grep -m1 'cpu' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//')"
+fi
 
-echo "CPU:"
-grep -m 1 "model name" /proc/cpuinfo 2>/dev/null || \
-grep -m 1 "cpu" /proc/cpuinfo 2>/dev/null
-echo
+echo "CPU      : ${CPU:-Unknown}"
 
-echo "Memory:"
-free -m
-echo
+# Architecture
+ARCH="$(uname -m)"
+echo "Arch     : $ARCH"
 
-echo "Network:"
-ifconfig 2>/dev/null
-echo
+# Memory
+MEM_KB="$(grep MemTotal /proc/meminfo | awk '{print $2}')"
 
-echo "Default Route:"
-route -n 2>/dev/null
-echo
+if [ -n "$MEM_KB" ]; then
+    MEM_MB=$((MEM_KB / 1024))
+    echo "Memory   : ${MEM_MB} MB"
+else
+    echo "Memory   : Unknown"
+fi
 
+# Kernel
+echo "Kernel   : $(uname -r)"
+
+echo
+echo "Network"
+echo "------------------------------------------------------------"
+
+# Find first non-loopback interface
+INTERFACE=""
+
+for IFACE in /sys/class/net/*; do
+    NAME="$(basename "$IFACE")"
+
+    if [ "$NAME" != "lo" ]; then
+        INTERFACE="$NAME"
+        break
+    fi
+done
+
+if [ -n "$INTERFACE" ]; then
+
+    echo "Interface: $INTERFACE"
+
+    # MAC address
+    if [ -f "/sys/class/net/$INTERFACE/address" ]; then
+        MAC="$(cat "/sys/class/net/$INTERFACE/address")"
+        echo "MAC      : $MAC"
+    fi
+
+    # IPv4 address
+    IP="$(ifconfig "$INTERFACE" 2>/dev/null \
+        | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' \
+        | head -n1)"
+
+    if [ -n "$IP" ]; then
+        echo "IP       : $IP"
+    else
+        echo "IP       : Not configured"
+    fi
+
+    # Default gateway
+    GATEWAY="$(route -n 2>/dev/null \
+        | awk '$1 == "0.0.0.0" {print $2; exit}')"
+
+    if [ -n "$GATEWAY" ]; then
+        echo "Gateway  : $GATEWAY"
+    else
+        echo "Gateway  : None"
+    fi
+
+else
+
+    echo "No network interface detected."
+
+fi
+
+echo
 echo "============================================================"
