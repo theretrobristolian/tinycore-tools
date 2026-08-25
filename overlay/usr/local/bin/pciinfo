@@ -1,0 +1,58 @@
+#!/bin/sh
+
+echo
+echo "============================================================"
+echo "              TinyCore Tools - PCI Information"
+echo "============================================================"
+echo
+
+if command -v lspci >/dev/null 2>&1; then
+
+    echo "PCI Devices"
+    echo "------------------------------------------------------------"
+    lspci -nn
+
+    echo
+    echo "Network Devices"
+    echo "------------------------------------------------------------"
+
+    NETWORK_DEVICES="$(lspci -nn | grep -Ei 'ethernet|network|wireless' || true)"
+
+    if [ -n "$NETWORK_DEVICES" ]; then
+        echo "$NETWORK_DEVICES"
+    else
+        echo "No PCI network devices identified."
+    fi
+
+else
+
+    echo "lspci is unavailable - showing raw Linux PCI data."
+    echo
+    echo "PCI Devices"
+    echo "------------------------------------------------------------"
+
+    FOUND=0
+
+    for DEVICE_PATH in /sys/bus/pci/devices/*; do
+
+        [ -d "$DEVICE_PATH" ] || continue
+        FOUND=1
+
+        SLOT="$(basename "$DEVICE_PATH")"
+        VENDOR="$(cat "$DEVICE_PATH/vendor" 2>/dev/null)"
+        DEVICE_ID="$(cat "$DEVICE_PATH/device" 2>/dev/null)"
+        CLASS="$(cat "$DEVICE_PATH/class" 2>/dev/null)"
+
+        echo "$SLOT  Vendor:${VENDOR#0x} Device:${DEVICE_ID#0x} Class:${CLASS#0x}"
+    done
+
+    if [ "$FOUND" -eq 0 ]; then
+        echo "No PCI devices detected."
+    fi
+fi
+
+echo
+echo "Tip: PCI IDs such as 8086:100e can be used to identify exact hardware."
+echo
+echo "============================================================"
+echo
