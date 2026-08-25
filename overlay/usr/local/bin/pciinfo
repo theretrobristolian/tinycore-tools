@@ -1,69 +1,50 @@
 #!/bin/sh
 
-LINE="============================================================"
-SUB="------------------------------------------------------------"
+. /usr/local/lib/tc-ui.sh
 
 page_output() {
-    if command -v less >/dev/null 2>&1; then
-        less
-    elif command -v more >/dev/null 2>&1; then
-        more
-    else
-        cat
+    if command -v less >/dev/null 2>&1; then less
+    elif command -v more >/dev/null 2>&1; then more
+    else cat
     fi
 }
 
 format_devices() {
-    # Convert long lspci lines into compact two-line records.  This avoids the
-    # terminal wrapping a device description or PCI ID halfway through a word.
     while IFS= read -r ENTRY; do
         [ -n "$ENTRY" ] || continue
-
         SLOT="$(printf '%s\n' "$ENTRY" | awk '{print $1}')"
         CLASS="$(printf '%s\n' "$ENTRY" | sed -E 's/^[^ ]+ (.*) \[[0-9a-fA-F]{4}\]: .*/\1/')"
         PCI_ID="$(printf '%s\n' "$ENTRY" | grep -oE '\[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]' | tail -n 1 | tr -d '[]')"
-
-        DESCRIPTION="$(printf '%s\n' "$ENTRY" \
-            | sed -E 's/^[^ ]+ .* \[[0-9a-fA-F]{4}\]: //' \
-            | sed -E 's/ \[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]( \(rev [^)]+\))?$//')"
-
+        DESCRIPTION="$(printf '%s\n' "$ENTRY" | sed -E 's/^[^ ]+ .* \[[0-9a-fA-F]{4}\]: //' | sed -E 's/ \[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]( \(rev [^)]+\))?$//')"
         printf '  %-9s %s\n' "$SLOT" "$CLASS"
         printf '            %s\n' "$DESCRIPTION"
-        if [ -n "$PCI_ID" ]; then
-            printf '            PCI ID: %s\n' "$PCI_ID"
-        fi
+        [ -n "$PCI_ID" ] && printf '            PCI ID: %s\n' "$PCI_ID"
         echo
     done
 }
 
 show_group() {
-    TITLE="$1"
-    PATTERN="$2"
+    TITLE="$1"; PATTERN="$2"
     RESULTS="$(lspci -nn | grep -Ei "$PATTERN" || true)"
-
     echo "$TITLE"
-    echo "$SUB"
-
-    if [ -n "$RESULTS" ]; then
-        printf '%s\n' "$RESULTS" | format_devices
-    else
-        echo "  None detected."
-        echo
+    tc_rule '-'
+    if [ -n "$RESULTS" ]; then printf '%s\n' "$RESULTS" | format_devices
+    else echo "  None detected."; echo
     fi
 }
 
 show_header() {
     echo
-    echo "$LINE"
-    echo "              TinyCore Tools - PCI Information"
-    echo "$LINE"
+    tc_rule '='
+    tc_center "TinyCore Tools - PCI Information"
+    tc_rule '='
     echo
 }
 
 show_footer() {
-    echo "$SUB"
+    tc_rule '-'
     echo "More: pciinfo network | storage | display | usb | audio | all"
-    echo "$LINE"
+    tc_rule '='
     echo
 }
 
@@ -71,64 +52,28 @@ show_header
 
 if ! command -v lspci >/dev/null 2>&1; then
     echo "lspci is unavailable - showing raw Linux PCI IDs."
-    echo "$SUB"
-
+    tc_rule '-'
     for DEVICE_PATH in /sys/bus/pci/devices/*; do
         [ -d "$DEVICE_PATH" ] || continue
         SLOT="$(basename "$DEVICE_PATH")"
         VENDOR="$(cat "$DEVICE_PATH/vendor" 2>/dev/null)"
         DEVICE_ID="$(cat "$DEVICE_PATH/device" 2>/dev/null)"
         CLASS="$(cat "$DEVICE_PATH/class" 2>/dev/null)"
-        printf '  %s\n' "$SLOT"
-        printf '    PCI ID: %s:%s\n' "${VENDOR#0x}" "${DEVICE_ID#0x}"
-        printf '    Class:  %s\n\n' "${CLASS#0x}"
+        printf '  %s\n    PCI ID: %s:%s\n    Class:  %s\n\n' "$SLOT" "${VENDOR#0x}" "${DEVICE_ID#0x}" "${CLASS#0x}"
     done
-
-    echo "$LINE"
+    tc_rule '='
     exit 0
 fi
 
 case "${1:-}" in
-    network|net)
-        show_group "Network" 'ethernet|network|wireless'
-        show_footer
-        ;;
-    storage|disk)
-        show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
-        show_footer
-        ;;
-    display|video|gpu)
-        show_group "Display" 'vga|display|3d controller'
-        show_footer
-        ;;
-    usb)
-        show_group "USB" 'usb controller'
-        show_footer
-        ;;
-    audio|sound)
-        show_group "Audio" 'audio|multimedia audio'
-        show_footer
-        ;;
+    network|net) show_group "Network" 'ethernet|network|wireless'; show_footer ;;
+    storage|disk) show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'; show_footer ;;
+    display|video|gpu) show_group "Display" 'vga|display|3d controller'; show_footer ;;
+    usb) show_group "USB" 'usb controller'; show_footer ;;
+    audio|sound) show_group "Audio" 'audio|multimedia audio'; show_footer ;;
     all)
-        {
-            echo "$LINE"
-            echo "          TinyCore Tools - Complete PCI Device List"
-            echo "$LINE"
-            echo
-            lspci -nn | format_devices
-            echo "$LINE"
-        } | page_output
+        { tc_rule '='; tc_center "TinyCore Tools - Complete PCI Device List"; tc_rule '='; echo; lspci -nn | format_devices; tc_rule '='; } | page_output
         ;;
-    "")
-        show_group "Network" 'ethernet|network|wireless'
-        show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'
-        show_footer
-        ;;
-    *)
-        echo "Unknown category: $1"
-        echo
-        echo "Usage: pciinfo [network|storage|display|usb|audio|all]"
-        echo "$LINE"
-        exit 1
-        ;;
+    "") show_group "Network" 'ethernet|network|wireless'; show_group "Storage" 'sata|ide|raid|scsi|non-volatile|nvme|mass storage'; show_footer ;;
+    *) echo "Unknown category: $1"; echo; echo "Usage: pciinfo [network|storage|display|usb|audio|all]"; tc_rule '='; exit 1 ;;
 esac
