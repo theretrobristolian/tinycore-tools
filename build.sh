@@ -133,15 +133,12 @@ prepare_original() {
     cleanup_mount
 }
 
-# -----------------------------------------------------------------------------
-# x86 build - full TinyCore Tools customisation
-# -----------------------------------------------------------------------------
-
-build_x86() {
-    local arch="x86"
-    local repo_arch="x86"
-    local kernel_name="vmlinuz"
-    local initrd_name="core.gz"
+build_arch() {
+    local arch="$1"
+    local repo_arch="$2"
+    local kernel_name="$3"
+    local initrd_name="$4"
+    local iso_name="$5"
 
     local arch_original="${ORIGINAL_DIR}/${arch}"
     local source_iso="${arch_original}/base.iso"
@@ -155,40 +152,40 @@ build_x86() {
     local iso_tree="${arch_scratch}/iso-tree"
 
     local arch_ipxe="${IPXE_DIR}/${arch}"
-    local output_iso="${ISO_OUTPUT_DIR}/tinycore-tools-x86.iso"
+    local output_iso="${ISO_OUTPUT_DIR}/${iso_name}"
     local output_kernel="${arch_ipxe}/${kernel_name}"
     local output_initrd="${arch_ipxe}/${initrd_name}"
 
     local extension tcz_file extract_dir iso_kernel iso_initrd
 
-    log "Building TinyCore Tools (x86)"
+    log "Building TinyCore Tools (${arch})"
 
     mkdir -p "${initrd_root}" "${extension_dir}" "${arch_ipxe}" "${ISO_OUTPUT_DIR}"
 
-    log "Unpacking base initramfs (x86)"
+    log "Unpacking base initramfs (${arch})"
 
     (
         cd "${initrd_root}"
         gzip -dc "${source_initrd}" | cpio -idmu --quiet
     )
 
-    log "Applying TinyCore Tools overlay (x86)"
+    log "Applying TinyCore Tools overlay (${arch})"
     cp -a "${OVERLAY_DIR}/." "${initrd_root}/"
 
     ACTIVE_TCZ_URL="http://tinycorelinux.net/${TINYCORE_BRANCH}/${repo_arch}/tcz"
     ACTIVE_EXTENSION_DIR="${extension_dir}"
     TCZ_QUEUE=()
 
-    log "Resolving Tiny Core extensions (x86)"
+    log "Resolving Tiny Core extensions (${arch})"
 
     for extension in "${TINYCORE_EXTENSIONS[@]}"; do
         queue_extension "${extension}"
     done
 
-    echo "Extensions to include (x86):"
+    echo "Extensions to include (${arch}):"
     printf '  - %s\n' "${TCZ_QUEUE[@]}"
 
-    log "Downloading and merging Tiny Core extensions (x86)"
+    log "Downloading and merging Tiny Core extensions (${arch})"
 
     for extension in "${TCZ_QUEUE[@]}"; do
         tcz_file="${extension_dir}/${extension}.tcz"
@@ -201,7 +198,7 @@ build_x86() {
         cp -a "${extract_dir}/." "${initrd_root}/"
     done
 
-    log "Preparing file permissions (x86)"
+    log "Preparing file permissions (${arch})"
 
     if [[ -d "${initrd_root}/usr/local/bin" ]]; then
         find "${initrd_root}/usr/local/bin" -type f -exec chmod 0755 {} +
@@ -211,7 +208,7 @@ build_x86() {
         chmod 0644 "${initrd_root}/home/tc/.profile"
     fi
 
-    log "Building merged initramfs (x86)"
+    log "Building merged initramfs (${arch})"
 
     cp "${source_kernel}" "${output_kernel}"
 
@@ -222,7 +219,7 @@ build_x86() {
             | gzip -9 > "${output_initrd}"
     )
 
-    log "Building bootable ISO (x86)"
+    log "Building bootable ISO (${arch})"
 
     mkdir -p "${iso_mount}" "${iso_tree}"
     CURRENT_MOUNT="${iso_mount}"
@@ -235,20 +232,20 @@ build_x86() {
     iso_kernel="$(find "${iso_tree}" -type f -name "${kernel_name}" | head -n1)"
     iso_initrd="$(find "${iso_tree}" -type f -name "${initrd_name}" | head -n1)"
 
-    [[ -n "${iso_kernel}" ]] || { echo "ERROR: Could not locate ${kernel_name} in x86 ISO tree."; exit 1; }
-    [[ -n "${iso_initrd}" ]] || { echo "ERROR: Could not locate ${initrd_name} in x86 ISO tree."; exit 1; }
+    [[ -n "${iso_kernel}" ]] || { echo "ERROR: Could not locate ${kernel_name} in ${arch} ISO tree."; exit 1; }
+    [[ -n "${iso_initrd}" ]] || { echo "ERROR: Could not locate ${initrd_name} in ${arch} ISO tree."; exit 1; }
 
     cp "${output_kernel}" "${iso_kernel}"
     cp "${output_initrd}" "${iso_initrd}"
 
-    [[ -f "${iso_tree}/boot/isolinux/isolinux.bin" ]] || { echo "ERROR: x86 ISO does not contain boot/isolinux/isolinux.bin"; exit 1; }
+    [[ -f "${iso_tree}/boot/isolinux/isolinux.bin" ]] || { echo "ERROR: ${arch} ISO does not contain boot/isolinux/isolinux.bin"; exit 1; }
 
     rm -f "${iso_tree}/boot/isolinux/boot.cat"
 
     xorriso -as mkisofs \
         -iso-level 3 \
         -full-iso9660-filenames \
-        -volid "TC_TOOLS_X86" \
+        -volid "TC_TOOLS_${arch^^}" \
         -eltorito-boot boot/isolinux/isolinux.bin \
         -eltorito-catalog boot/isolinux/boot.cat \
         -no-emul-boot \
@@ -256,35 +253,6 @@ build_x86() {
         -boot-info-table \
         -output "${output_iso}" \
         "${iso_tree}"
-}
-
-# -----------------------------------------------------------------------------
-# amd64 validation build - PRISTINE upstream files only
-# -----------------------------------------------------------------------------
-
-build_amd64_pristine() {
-    local source_dir="${ORIGINAL_DIR}/amd64"
-    local output_dir="${IPXE_DIR}/amd64"
-
-    log "Preparing pristine CorePure64 validation payload (amd64)"
-
-    mkdir -p "${output_dir}" "${ISO_OUTPUT_DIR}"
-
-    # Deliberately do not unpack, patch, merge extensions or otherwise modify
-    # the amd64 payload. This proves whether upstream CorePure64 itself boots
-    # correctly through the current UEFI/iPXE path before customisation resumes.
-    cp "${source_dir}/vmlinuz64" "${output_dir}/vmlinuz64"
-    cp "${source_dir}/corepure64.gz" "${output_dir}/corepure64.gz"
-
-    # Keep an untouched copy of the upstream ISO for direct VM/CD/USB testing.
-    cp "${source_dir}/base.iso" "${ISO_OUTPUT_DIR}/tinycore-tools-amd64-pristine.iso"
-
-    echo "amd64 validation mode:"
-    echo "  No TinyCore Tools overlay"
-    echo "  No nano"
-    echo "  No pciutils"
-    echo "  No initramfs repack"
-    echo "  Files are byte-for-byte copies of the extracted upstream payload"
 }
 
 # -----------------------------------------------------------------------------
@@ -369,8 +337,8 @@ mkdir -p "${SCRATCH_DIR}" "${OUTPUT_DIR}" "${IPXE_DIR}" "${ISO_OUTPUT_DIR}"
 prepare_original "x86" "${X86_ISO_URL}" "vmlinuz" "core.gz"
 prepare_original "amd64" "${AMD64_ISO_URL}" "vmlinuz64" "corepure64.gz"
 
-build_x86
-build_amd64_pristine
+build_arch "x86"   "x86"    "vmlinuz"   "core.gz"       "tinycore-tools-x86.iso"
+build_arch "amd64" "x86_64" "vmlinuz64" "corepure64.gz" "tinycore-tools-amd64.iso"
 
 # -----------------------------------------------------------------------------
 # Finished
@@ -396,19 +364,18 @@ cat <<'EOF'
 
   :tiny-core-x86
   kernel ${base-url}livecd/tiny-core/x86/vmlinuz quiet loglevel=3 || goto failed
-  initrd ${base-url}livecd/tiny-core/x86/core.gz core.gz            || goto failed
+  initrd ${base-url}livecd/tiny-core/x86/core.gz                    || goto failed
   boot                                                               || goto failed
 
-  # amd64 is intentionally pristine for validation.
   :tiny-core-amd64
-  kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 initrd=corepure64.gz || goto failed
-  initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz corepure64.gz    || goto failed
-  boot                                                                  || goto failed
+  kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 quiet || goto failed
+  initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz    || goto failed
+  boot                                                        || goto failed
 EOF
 
 echo
-echo "amd64 is currently in PRISTINE VALIDATION MODE."
-echo "If this still panics, the problem is the UEFI/iPXE/CorePure64 boot path rather than the TinyCore Tools overlay."
+echo "Important: the amd64/UEFI path intentionally uses the proven minimal CorePure64 syntax."
+echo "Do not add initrd=corepure64.gz to the kernel line."
 
 echo
 echo "To sync from GitHub and rebuild:"
