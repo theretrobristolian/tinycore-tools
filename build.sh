@@ -15,6 +15,7 @@ ORIGINAL_DIR="${SCRIPT_ROOT}/original"
 PATCHED_DIR="${SCRIPT_ROOT}/patched"
 OVERLAY_DIR="${SCRIPT_ROOT}/overlay"
 SCRATCH_DIR="${SCRIPT_ROOT}/tc-scratch"
+OVERLAY_BUILD_DIR="${SCRATCH_DIR}/overlay-build"
 
 ISO_PATH="${SCRATCH_DIR}/${ISO_NAME}"
 ISO_MOUNT="${SCRATCH_DIR}/iso"
@@ -26,6 +27,7 @@ PATCHED_KERNEL="${PATCHED_DIR}/vmlinuz"
 PATCHED_INITRD="${PATCHED_DIR}/core.gz"
 PATCHED_TOOLS="${PATCHED_DIR}/tools.gz"
 
+REFRESH=false
 
 # -----------------------------------------------------------------------------
 # Helpers
@@ -44,6 +46,71 @@ cleanup_mount() {
 
 trap cleanup_mount EXIT
 
+usage() {
+    cat <<EOF
+Usage:
+  bash build.sh
+  bash build.sh --refresh
+
+Options:
+  --refresh   Force-sync tracked repository files to origin/main, then build.
+              Generated/cache folders such as original/, patched/ and
+              tc-scratch/ are preserved.
+  -h, --help  Show this help.
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# Arguments
+# -----------------------------------------------------------------------------
+
+while (( $# > 0 )); do
+    case "$1" in
+        --refresh)
+            REFRESH=true
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown option: $1"
+            echo
+            usage
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+# -----------------------------------------------------------------------------
+# Optional repository refresh
+# -----------------------------------------------------------------------------
+
+if [[ "${REFRESH}" == true ]]; then
+
+    log "Refreshing repository from origin/main"
+
+    if ! command -v git >/dev/null 2>&1; then
+        echo "ERROR: git is required for --refresh."
+        exit 1
+    fi
+
+    if ! git -C "${SCRIPT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "ERROR: ${SCRIPT_ROOT} is not a Git working tree."
+        exit 1
+    fi
+
+    echo "Local tracked changes will be discarded."
+    echo "Generated/cache directories are preserved."
+    echo
+
+    git -C "${SCRIPT_ROOT}" fetch origin main
+    git -C "${SCRIPT_ROOT}" reset --hard origin/main
+
+    # Re-run the freshly downloaded script without requiring an executable bit.
+    exec bash "${SCRIPT_ROOT}/build.sh"
+fi
 
 # -----------------------------------------------------------------------------
 # Prerequisite check
@@ -164,7 +231,6 @@ if (( ${#MISSING_COMMANDS[@]} > 0 )); then
 
 fi
 
-
 # -----------------------------------------------------------------------------
 # Verify prerequisites after installation
 # -----------------------------------------------------------------------------
@@ -178,7 +244,6 @@ done
 
 log "Prerequisite check passed"
 
-
 # -----------------------------------------------------------------------------
 # Prepare directories
 # -----------------------------------------------------------------------------
@@ -187,7 +252,6 @@ mkdir -p "${ORIGINAL_DIR}"
 mkdir -p "${PATCHED_DIR}"
 mkdir -p "${OVERLAY_DIR}"
 mkdir -p "${SCRATCH_DIR}"
-
 
 # -----------------------------------------------------------------------------
 # Check for original Tiny Core files
@@ -209,19 +273,11 @@ else
     mkdir -p "${SCRATCH_DIR}"
     mkdir -p "${ISO_MOUNT}"
 
-    # -------------------------------------------------------------------------
-    # Download ISO
-    # -------------------------------------------------------------------------
-
     log "Downloading Tiny Core Linux ${TINYCORE_VERSION}"
 
     wget \
         -O "${ISO_PATH}" \
         "${BASE_URL}/${ISO_NAME}"
-
-    # -------------------------------------------------------------------------
-    # Mount ISO
-    # -------------------------------------------------------------------------
 
     log "Mounting ISO"
 
@@ -229,10 +285,6 @@ else
         -o loop,ro \
         "${ISO_PATH}" \
         "${ISO_MOUNT}"
-
-    # -------------------------------------------------------------------------
-    # Locate files
-    # -------------------------------------------------------------------------
 
     log "Locating vmlinuz and core.gz"
 
@@ -249,10 +301,6 @@ else
         exit 1
     fi
 
-    # -------------------------------------------------------------------------
-    # Save gold copies
-    # -------------------------------------------------------------------------
-
     log "Saving original Tiny Core files"
 
     cp "${KERNEL_SOURCE}" "${ORIGINAL_KERNEL}"
@@ -260,16 +308,9 @@ else
 
     cleanup_mount
 
-    # -------------------------------------------------------------------------
-    # Delete ISO
-    # -------------------------------------------------------------------------
-
     log "Removing downloaded ISO"
-
     rm -f "${ISO_PATH}"
-
 fi
-
 
 # -----------------------------------------------------------------------------
 # Recreate scratch directory
@@ -279,7 +320,7 @@ log "Preparing scratch workspace"
 
 rm -rf "${SCRATCH_DIR}"
 mkdir -p "${SCRATCH_DIR}"
-
+mkdir -p "${OVERLAY_BUILD_DIR}"
 
 # -----------------------------------------------------------------------------
 # Clear previous patched output
@@ -290,7 +331,6 @@ log "Clearing previous patched build"
 rm -rf "${PATCHED_DIR}"
 mkdir -p "${PATCHED_DIR}"
 
-
 # -----------------------------------------------------------------------------
 # Copy original Tiny Core files
 # -----------------------------------------------------------------------------
@@ -300,6 +340,29 @@ log "Copying original Tiny Core boot files"
 cp "${ORIGINAL_KERNEL}" "${PATCHED_KERNEL}"
 cp "${ORIGINAL_INITRD}" "${PATCHED_INITRD}"
 
+# -----------------------------------------------------------------------------
+# Prepare overlay copy
+# -----------------------------------------------------------------------------
+
+log "Preparing overlay"
+
+if [[ -n "$(find "${OVERLAY_DIR}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+
+    cp -a "${OVERLAY_DIR}/." "${OVERLAY_BUILD_DIR}/"
+
+    # Files under /usr/local/bin are commands in the booted environment.
+    # Set execute permissions only on the temporary build copy so the Git
+    # working tree remains untouched.
+    if [[ -d "${OVERLAY_BUILD_DIR}/usr/local/bin" ]]; then
+        find "${OVERLAY_BUILD_DIR}/usr/local/bin" -type f -exec chmod 0755 {} +
+    fi
+
+    # Normal configuration files do not need to be executable.
+    if [[ -f "${OVERLAY_BUILD_DIR}/home/tc/.profile" ]]; then
+        chmod 0644 "${OVERLAY_BUILD_DIR}/home/tc/.profile"
+    fi
+
+fi
 
 # -----------------------------------------------------------------------------
 # Build custom tools initramfs
@@ -307,9 +370,9 @@ cp "${ORIGINAL_INITRD}" "${PATCHED_INITRD}"
 
 log "Building tools overlay"
 
-if [[ -n "$(find "${OVERLAY_DIR}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+if [[ -n "$(find "${OVERLAY_BUILD_DIR}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
 
-    cd "${OVERLAY_DIR}"
+    cd "${OVERLAY_BUILD_DIR}"
 
     find . -print0 \
         | cpio --null -ov --format=newc \
@@ -325,9 +388,7 @@ else
     printf '' \
         | cpio -o --format=newc \
         | gzip -9 > "${PATCHED_TOOLS}"
-
 fi
-
 
 # -----------------------------------------------------------------------------
 # Add scratch README
@@ -354,29 +415,16 @@ patched/
         tools.gz
 
 overlay/
-    Files to inject into Tiny Core at boot.
-
-    The directory structure underneath overlay/ should match the
-    desired Linux filesystem structure.
-
-    Example:
-
-        overlay/etc/motd
-
-    becomes:
-
-        /etc/motd
-
-    inside Tiny Core.
+    Source files to inject into Tiny Core at boot.
+    build.sh copies these into tc-scratch/overlay-build before changing
+    permissions or creating tools.gz, leaving the Git working tree untouched.
 
 tc-scratch/
     Temporary build workspace.
 
 The original Tiny Core core.gz is never unpacked or modified.
-
-tools.gz contains only the contents of overlay/.
+tools.gz contains only the custom overlay.
 EOF
-
 
 # -----------------------------------------------------------------------------
 # Finished
@@ -401,7 +449,11 @@ echo "  ${PATCHED_TOOLS}"
 echo
 echo "Example iPXE:"
 echo
-echo "  kernel <url>/vmlinuz"
+echo "  kernel <url>/vmlinuz quiet loglevel=3"
 echo "  initrd <url>/core.gz"
 echo "  initrd <url>/tools.gz"
 echo "  boot"
+
+echo
+echo "To sync tracked files from GitHub and rebuild next time:"
+echo "  bash build.sh --refresh"
