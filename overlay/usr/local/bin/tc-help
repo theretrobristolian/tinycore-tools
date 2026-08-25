@@ -1,23 +1,22 @@
 #!/bin/sh
 
-LINE="============================================================"
-SUB="------------------------------------------------------------"
+. /usr/local/lib/tc-ui.sh
 
 echo
-echo "$LINE"
-echo "                    TinyCore Tools"
-echo "$LINE"
+tc_rule '='
+tc_center "TinyCore Tools"
+tc_rule '='
 echo
 echo "Lightweight iPXE diagnostic environment"
 echo
 echo "Project commands"
-echo "$SUB"
+tc_rule '-'
 printf "  %-10s %s\n" "help"    "Show this help screen"
 printf "  %-10s %s\n" "sysinfo" "Show CPU, memory, kernel and active network info"
 printf "  %-10s %s\n" "pciinfo" "Show key PCI hardware grouped by device type"
 echo
 echo "Included utilities"
-echo "$SUB"
+tc_rule '-'
 printf "  %-10s %s\n" "nano"     "Simple text editor"
 printf "  %-10s %s\n" "lspci"    "Show PCI devices"
 printf "  %-10s %s\n" "ifconfig" "Show network interfaces"
@@ -27,17 +26,17 @@ printf "  %-10s %s\n" "dmesg"    "Show kernel messages"
 printf "  %-10s %s\n" "free -m"  "Show memory usage"
 echo
 echo "PCI examples"
-echo "$SUB"
+tc_rule '-'
 printf "  %-18s %s\n" "pciinfo"      "Key devices only"
 printf "  %-18s %s\n" "pciinfo all"  "Full PCI list, paged"
 printf "  %-18s %s\n" "lspci -nn"    "Raw PCI list with vendor/device IDs"
 echo
 echo "Editor example"
-echo "$SUB"
+tc_rule '-'
 echo "  nano /tmp/notes.txt"
 echo
-echo "$LINE"
-echo "Created by The Retro Bristolian"
-echo "https://github.com/theretrobristolian/tinycore-tools"
-echo "$LINE"
+tc_rule '='
+tc_center "Created by The Retro Bristolian"
+tc_center "github.com/theretrobristolian/tinycore-tools"
+tc_rule '='
 echo
