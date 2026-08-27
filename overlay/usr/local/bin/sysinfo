@@ -58,9 +58,6 @@ show_board_network() {
     echo "Network"
     tc_rule '-'
 
-    # Prefer the interface carrying the default route. If DHCP has not yet
-    # succeeded, still report a real detected NIC rather than incorrectly
-    # saying that no interface exists.
     INTERFACE="$(route -n 2>/dev/null | awk '$1 == "0.0.0.0" {print $8; exit}')"
 
     if [ -z "$INTERFACE" ]; then
@@ -70,7 +67,6 @@ show_board_network() {
             [ "$NAME" = "dummy0" ] && continue
             INTERFACE="$NAME"
 
-            # Prefer a NIC with physical carrier when more than one exists.
             if [ -r "$IFACE_PATH/carrier" ] && [ "$(cat "$IFACE_PATH/carrier" 2>/dev/null)" = "1" ]; then
                 break
             fi
@@ -78,6 +74,19 @@ show_board_network() {
     fi
 
     if [ -n "$INTERFACE" ]; then
+        # If the NIC has carrier but DHCP is still settling, retry briefly so
+        # sysinfo does not report a transient 'Not configured' state.
+        IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
+        if [ -z "$IP" ] && [ -r "/sys/class/net/$INTERFACE/carrier" ] && [ "$(cat "/sys/class/net/$INTERFACE/carrier" 2>/dev/null)" = "1" ]; then
+            WAIT=0
+            while [ "$WAIT" -lt 3 ]; do
+                sleep 1
+                IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
+                [ -n "$IP" ] && break
+                WAIT=$((WAIT + 1))
+            done
+        fi
+
         printf '%-13s: %s\n' "Interface" "$INTERFACE"
 
         if [ -f "/sys/class/net/$INTERFACE/address" ]; then
@@ -96,7 +105,6 @@ show_board_network() {
         fi
         printf '%-13s: %s\n' "Link" "$LINK"
 
-        IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
         if [ -n "$IP" ]; then
             printf '%-13s: %s\n' "IP" "$IP"
         else
