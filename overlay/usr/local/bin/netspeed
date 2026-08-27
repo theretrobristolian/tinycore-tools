@@ -1,0 +1,111 @@
+#!/bin/sh
+
+. /usr/local/lib/tc-ui.sh
+
+usage() {
+    echo "Usage:"
+    echo "  netspeed <server>"
+    echo "  netspeed <server> upload"
+    echo "  netspeed <server> download"
+    echo "  netspeed <server> both"
+    echo "  netspeed server"
+    echo
+    echo "Examples:"
+    echo "  netspeed 10.1.2.50"
+    echo "  netspeed 10.1.2.50 download"
+    echo "  netspeed server"
+}
+
+if ! command -v iperf3 >/dev/null 2>&1; then
+    echo "ERROR: iperf3 is not available in this build."
+    exit 1
+fi
+
+if [ $# -lt 1 ]; then
+    usage
+    exit 1
+fi
+
+if [ "$1" = "server" ]; then
+    echo
+    tc_rule '='
+    tc_center "TinyCore Tools - Network Speed Server"
+    tc_rule '='
+    echo
+    echo "Starting iperf3 server on TCP port 5201."
+    echo "Press Ctrl+C to stop."
+    echo
+    exec iperf3 -s
+fi
+
+SERVER="$1"
+MODE="${2:-both}"
+
+case "$MODE" in
+    upload|download|both) ;;
+    *)
+        echo "ERROR: Mode must be upload, download or both."
+        echo
+        usage
+        exit 1
+        ;;
+esac
+
+INTERFACE="$(route -n 2>/dev/null | awk '$1 == "0.0.0.0" {print $8; exit}')"
+IP=""
+if [ -n "$INTERFACE" ]; then
+    IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
+fi
+
+run_test() {
+    LABEL="$1"
+    shift
+
+    echo "Running ${LABEL} test..."
+    RESULT="$(iperf3 -c "$SERVER" -t 5 -f m "$@" 2>&1)"
+    STATUS=$?
+
+    if [ "$STATUS" -ne 0 ]; then
+        printf '%-13s: Failed\n' "$LABEL"
+        printf '%s\n' "$RESULT" | tail -n 3
+        return 1
+    fi
+
+    SUMMARY="$(printf '%s\n' "$RESULT" | awk '/receiver$/ {line=$0} END {print line}')"
+
+    if [ -n "$SUMMARY" ]; then
+        RATE="$(printf '%s\n' "$SUMMARY" | sed 's/^\[[^]]*\][[:space:]]*//' | awk '{print $(NF-2), $(NF-1)}')"
+        printf '%-13s: %s\n' "$LABEL" "$RATE"
+    else
+        printf '%-13s: Completed\n' "$LABEL"
+    fi
+}
+
+echo
+tc_rule '='
+tc_center "TinyCore Tools - Network Speed"
+tc_rule '='
+echo
+printf '%-13s: %s\n' "Server" "$SERVER"
+printf '%-13s: %s\n' "Interface" "${INTERFACE:-Unknown}"
+printf '%-13s: %s\n' "Local IP" "${IP:-Not configured}"
+printf '%-13s: %s\n' "Test length" "5 seconds per direction"
+echo
+tc_rule '-'
+
+case "$MODE" in
+    upload)
+        run_test "Upload"
+        ;;
+    download)
+        run_test "Download" -R
+        ;;
+    both)
+        run_test "Upload"
+        run_test "Download" -R
+        ;;
+esac
+
+echo
+tc_rule '='
+echo
