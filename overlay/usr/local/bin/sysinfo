@@ -58,26 +58,59 @@ show_board_network() {
     echo "Network"
     tc_rule '-'
 
+    # Prefer the interface carrying the default route. If DHCP has not yet
+    # succeeded, still report a real detected NIC rather than incorrectly
+    # saying that no interface exists.
     INTERFACE="$(route -n 2>/dev/null | awk '$1 == "0.0.0.0" {print $8; exit}')"
+
     if [ -z "$INTERFACE" ]; then
         for IFACE_PATH in /sys/class/net/*; do
             NAME="$(basename "$IFACE_PATH")"
             [ "$NAME" = "lo" ] && continue
             [ "$NAME" = "dummy0" ] && continue
-            IP="$(ifconfig "$NAME" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
-            if [ -n "$IP" ]; then INTERFACE="$NAME"; break; fi
+            INTERFACE="$NAME"
+
+            # Prefer a NIC with physical carrier when more than one exists.
+            if [ -r "$IFACE_PATH/carrier" ] && [ "$(cat "$IFACE_PATH/carrier" 2>/dev/null)" = "1" ]; then
+                break
+            fi
         done
     fi
 
     if [ -n "$INTERFACE" ]; then
         printf '%-13s: %s\n' "Interface" "$INTERFACE"
-        if [ -f "/sys/class/net/$INTERFACE/address" ]; then printf '%-13s: %s\n' "MAC" "$(cat "/sys/class/net/$INTERFACE/address")"; else printf '%-13s: Unknown\n' "MAC"; fi
+
+        if [ -f "/sys/class/net/$INTERFACE/address" ]; then
+            printf '%-13s: %s\n' "MAC" "$(cat "/sys/class/net/$INTERFACE/address")"
+        else
+            printf '%-13s: Unknown\n' "MAC"
+        fi
+
+        LINK="Unknown"
+        if [ -r "/sys/class/net/$INTERFACE/carrier" ]; then
+            if [ "$(cat "/sys/class/net/$INTERFACE/carrier" 2>/dev/null)" = "1" ]; then
+                LINK="Up"
+            else
+                LINK="Down"
+            fi
+        fi
+        printf '%-13s: %s\n' "Link" "$LINK"
+
         IP="$(ifconfig "$INTERFACE" 2>/dev/null | sed -n 's/.*inet addr:\([^ ]*\).*/\1/p' | head -n1)"
-        if [ -n "$IP" ]; then printf '%-13s: %s\n' "IP" "$IP"; else printf '%-13s: Not configured\n' "IP"; fi
+        if [ -n "$IP" ]; then
+            printf '%-13s: %s\n' "IP" "$IP"
+        else
+            printf '%-13s: Not configured\n' "IP"
+        fi
+
         GATEWAY="$(route -n 2>/dev/null | awk -v iface="$INTERFACE" '$1 == "0.0.0.0" && $8 == iface {print $2; exit}')"
-        if [ -n "$GATEWAY" ]; then printf '%-13s: %s\n' "Gateway" "$GATEWAY"; else printf '%-13s: None\n' "Gateway"; fi
+        if [ -n "$GATEWAY" ]; then
+            printf '%-13s: %s\n' "Gateway" "$GATEWAY"
+        else
+            printf '%-13s: None\n' "Gateway"
+        fi
     else
-        echo "No active network interface detected."
+        echo "No network interface detected."
     fi
 
     echo
@@ -87,9 +120,9 @@ show_board_network() {
 
 ROWS="$(tc_rows)"
 
-# The complete report is about 34 lines. On taller terminals show it in one go;
+# The complete report is about 35 lines. On taller terminals show it in one go;
 # on classic 25-line VGA consoles split it into two deliberate screens.
-if [ "$ROWS" -ge 38 ]; then
+if [ "$ROWS" -ge 39 ]; then
     show_header
     show_system
     show_board_network
