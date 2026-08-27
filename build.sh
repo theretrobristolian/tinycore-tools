@@ -12,6 +12,8 @@ AMD64_ISO_URL="http://tinycorelinux.net/${TINYCORE_BRANCH}/x86_64/release/CorePu
 TINYCORE_EXTENSIONS=(
     nano
     pciutils
+    iperf3
+    dmidecode
 )
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
