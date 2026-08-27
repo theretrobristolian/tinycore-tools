@@ -1,0 +1,112 @@
+#!/bin/sh
+
+. /usr/local/lib/tc-ui.sh
+
+usage() {
+    echo "Usage:"
+    echo "  meminfo"
+    echo "  meminfo slots"
+}
+
+if ! command -v dmidecode >/dev/null 2>&1; then
+    echo "ERROR: dmidecode is not available in this build."
+    exit 1
+fi
+
+MODE="${1:-summary}"
+case "$MODE" in
+    summary|slots) ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) echo "ERROR: Unknown option: $MODE"; echo; usage; exit 1 ;;
+esac
+
+DMI="$(sudo dmidecode -t 17 2>/dev/null)"
+if [ -z "$DMI" ]; then
+    echo "ERROR: SMBIOS memory information is not available on this machine."
+    exit 1
+fi
+
+TMP="/tmp/tc-meminfo.$$"
+trap 'rm -f "$TMP"' EXIT INT TERM
+
+printf '%s\n' "$DMI" | awk '
+/^Memory Device$/ {
+    if (seen) print "---"
+    seen=1
+    next
+}
+seen && /^[[:space:]]*(Size|Locator|Bank Locator|Type|Speed|Configured Memory Speed|Manufacturer|Serial Number|Part Number):/ {
+    sub(/^[[:space:]]*/, "")
+    print
+}
+END { if (seen) print "---" }
+' > "$TMP"
+
+TOTAL_KB="$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo)"
+TOTAL_MB=$((TOTAL_KB / 1024))
+TOTAL_GB="$(awk -v mb="$TOTAL_MB" 'BEGIN {printf "%.1f GB", mb/1024}')"
+SLOTS="$(grep -c '^Locator:' "$TMP" 2>/dev/null || true)"
+USED="$(awk -F': ' '/^Size:/ && $2 !~ /No Module Installed|Not Installed|Unknown|None/ {n++} END {print n+0}' "$TMP")"
+FREE=$((SLOTS - USED))
+[ "$FREE" -lt 0 ] && FREE=0
+TYPE="$(awk -F': ' '/^Type:/ && $2 !~ /Unknown|Other/ {print $2; exit}' "$TMP")"
+SPEED="$(awk -F': ' '/^Configured Memory Speed:/ && $2 !~ /Unknown|0 MT\/s/ {print $2; exit}' "$TMP")"
+[ -n "$SPEED" ] || SPEED="$(awk -F': ' '/^Speed:/ && $2 !~ /Unknown|0 MT\/s/ {print $2; exit}' "$TMP")"
+
+echo
+tc_rule '='
+tc_center "TinyCore Tools - Memory Information"
+tc_rule '='
+echo
+printf '%-14s: %s\n' "Installed" "$TOTAL_GB"
+printf '%-14s: %s\n' "Slots" "${SLOTS:-Unknown}"
+printf '%-14s: %s\n' "Used" "${USED:-Unknown}"
+printf '%-14s: %s\n' "Free" "${FREE:-Unknown}"
+printf '%-14s: %s\n' "Type" "${TYPE:-Unknown}"
+printf '%-14s: %s\n' "Speed" "${SPEED:-Unknown}"
+
+if [ "$MODE" = "slots" ]; then
+    echo
+    tc_rule '-'
+    echo "Memory Devices"
+    tc_rule '-'
+
+    awk -F': ' '
+    function reset() {size=loc=bank=type=speed=cfg=mfg=serial=part=""}
+    function show() {
+        if (loc == "") return
+        printf "\nSlot          : %s\n", loc
+        if (bank != "" && bank != "Not Specified") printf "Bank          : %s\n", bank
+        if (size ~ /No Module Installed|Not Installed/) {
+            printf "Status        : Empty\n"
+            return
+        }
+        printf "Size          : %s\n", (size != "" ? size : "Unknown")
+        printf "Type          : %s\n", (type != "" ? type : "Unknown")
+        if (speed != "") printf "Speed         : %s\n", speed
+        if (cfg != "") printf "Configured    : %s\n", cfg
+        if (mfg != "" && mfg != "Unknown" && mfg != "Not Specified") printf "Manufacturer  : %s\n", mfg
+        if (part != "" && part != "Unknown" && part != "Not Specified") printf "Part Number   : %s\n", part
+        if (serial != "" && serial != "Unknown" && serial != "Not Specified" && serial != "00000000") printf "Serial        : %s\n", serial
+    }
+    /^---$/ {show(); reset(); next}
+    /^Size:/ {size=$2}
+    /^Locator:/ {loc=$2}
+    /^Bank Locator:/ {bank=$2}
+    /^Type:/ {type=$2}
+    /^Speed:/ {speed=$2}
+    /^Configured Memory Speed:/ {cfg=$2}
+    /^Manufacturer:/ {mfg=$2}
+    /^Serial Number:/ {serial=$2}
+    /^Part Number:/ {part=$2}
+    END {show()}
+    ' "$TMP"
+fi
+
+echo
+tc_rule '='
+if [ "$MODE" = "summary" ]; then
+    echo "More: meminfo slots"
+    tc_rule '='
+fi
+echo
