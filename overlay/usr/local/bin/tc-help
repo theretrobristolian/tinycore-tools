@@ -11,13 +11,29 @@ echo "Lightweight iPXE diagnostic environment"
 echo
 echo "Project commands"
 tc_rule '-'
-printf "  %-10s %s\n" "help"    "Show this help screen"
-printf "  %-10s %s\n" "sysinfo" "Show CPU, memory, kernel and active network info"
-printf "  %-10s %s\n" "pciinfo" "Show key PCI hardware grouped by device type"
+printf "  %-12s %s\n" "help"      "Show this help screen"
+printf "  %-12s %s\n" "sysinfo"   "Show system, hardware and active network info"
+printf "  %-12s %s\n" "pciinfo"   "Show key PCI hardware grouped by device type"
+printf "  %-12s %s\n" "meminfo"   "Show installed memory and slot summary"
+printf "  %-12s %s\n" "netspeed"  "Run an iperf3 LAN throughput test"
+echo
+echo "Network speed"
+tc_rule '-'
+printf "  %-24s %s\n" "netspeed 10.1.2.50" "Test upload and download"
+printf "  %-24s %s\n" "netspeed 10.1.2.50 upload" "Upload only"
+printf "  %-24s %s\n" "netspeed 10.1.2.50 download" "Download only"
+printf "  %-24s %s\n" "netspeed server" "Run this machine as iperf3 server"
+echo
+echo "Memory"
+tc_rule '-'
+printf "  %-18s %s\n" "meminfo"       "Memory capacity, slots, type and speed"
+printf "  %-18s %s\n" "meminfo slots" "Per-slot DIMM details from SMBIOS"
 echo
 echo "Included utilities"
 tc_rule '-'
 printf "  %-10s %s\n" "nano"     "Simple text editor"
+printf "  %-10s %s\n" "iperf3"   "Network throughput tester"
+printf "  %-10s %s\n" "dmidecode" "SMBIOS/DMI hardware information"
 printf "  %-10s %s\n" "lspci"    "Show PCI devices"
 printf "  %-10s %s\n" "ifconfig" "Show network interfaces"
 printf "  %-10s %s\n" "route -n" "Show routing table"
