@@ -35,7 +35,7 @@ printf '%s\n' "$DMI" | awk '
     seen=1
     next
 }
-seen && /^[[:space:]]*(Size|Locator|Bank Locator|Type|Type Detail|Speed|Configured Memory Speed|Manufacturer|Serial Number|Part Number):/ {
+seen && /^[[:space:]]*(Size|Locator|Bank Locator|Form Factor|Type|Type Detail|Speed|Configured Memory Speed|Manufacturer|Serial Number|Part Number):/ {
     sub(/^[[:space:]]*/, "")
     print
 }
@@ -48,9 +48,7 @@ USABLE_KB="$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo)"
 USABLE_MB=$((USABLE_KB / 1024))
 USABLE_GB="$(awk -v mb="$USABLE_MB" 'BEGIN {printf "%.1f GB", mb/1024}')"
 
-# Physical installed memory from SMBIOS Type 17 records. Sum populated DIMMs
-# instead of using /proc/meminfo so an 8 GB module is reported as 8 GB rather
-# than (for example) 7.7 GB usable.
+# Physical installed memory from populated SMBIOS Type 17 records.
 INSTALLED_MB="$(awk -F': ' '
 /^Size:/ {
     value=$2
@@ -80,14 +78,41 @@ USED="$(awk -F': ' '/^Size:/ && $2 !~ /No Module Installed|Not Installed|Unknown
 FREE=$((SLOTS - USED))
 [ "$FREE" -lt 0 ] && FREE=0
 
-# Some firmware/dmidecode combinations expose a valid SMBIOS record but print
-# '<OUT OF SPEC>' for a memory type value they do not recognise. Do not present
-# that implementation detail as though it were the RAM type.
-TYPE="$(awk -F': ' '/^Type:/ && $2 !~ /Unknown|Other|<OUT OF SPEC>/ {print $2; exit}' "$TMP")"
-[ -n "$TYPE" ] || TYPE="Unknown (SMBIOS)"
+# Derive summary fields only from the first POPULATED DIMM record. This avoids
+# accidentally taking generic/empty-slot values from another SMBIOS record.
+SUMMARY_FIELDS="$(awk -F': ' '
+function reset() {size=type=form=speed=cfg=""}
+function valid_size(v) {return v !~ /No Module Installed|Not Installed|Unknown|None/ && v != ""}
+function clean_type(v) {
+    if (v == "" || v == "Unknown" || v == "Other" || v == "<OUT OF SPEC>") return "Unknown (SMBIOS)"
+    return v
+}
+function show() {
+    if (done || !valid_size(size)) return
+    t=clean_type(type)
+    s=(cfg != "" && cfg !~ /Unknown|0 MT\/s|0 MHz/) ? cfg : speed
+    if (s == "" || s ~ /Unknown|0 MT\/s|0 MHz/) s="Unknown"
+    f=(form != "" && form != "Unknown" && form != "Other") ? form : "Unknown"
+    print "TYPE=" t
+    print "FORM=" f
+    print "SPEED=" s
+    done=1
+}
+/^---$/ {show(); reset(); next}
+/^Size:/ {size=$2}
+/^Type:/ {type=$2}
+/^Form Factor:/ {form=$2}
+/^Speed:/ {speed=$2}
+/^Configured Memory Speed:/ {cfg=$2}
+END {show()}
+' "$TMP")"
 
-SPEED="$(awk -F': ' '/^Configured Memory Speed:/ && $2 !~ /Unknown|0 MT\/s|0 MHz/ {print $2; exit}' "$TMP")"
-[ -n "$SPEED" ] || SPEED="$(awk -F': ' '/^Speed:/ && $2 !~ /Unknown|0 MT\/s|0 MHz/ {print $2; exit}' "$TMP")"
+TYPE="$(printf '%s\n' "$SUMMARY_FIELDS" | sed -n 's/^TYPE=//p' | head -n1)"
+FORM="$(printf '%s\n' "$SUMMARY_FIELDS" | sed -n 's/^FORM=//p' | head -n1)"
+SPEED="$(printf '%s\n' "$SUMMARY_FIELDS" | sed -n 's/^SPEED=//p' | head -n1)"
+
+[ -n "$TYPE" ] || TYPE="Unknown (SMBIOS)"
+[ -n "$FORM" ] || FORM="Unknown"
 [ -n "$SPEED" ] || SPEED="Unknown"
 
 echo
@@ -101,6 +126,7 @@ printf '%-14s: %s\n' "Slots" "${SLOTS:-Unknown}"
 printf '%-14s: %s\n' "Used" "${USED:-Unknown}"
 printf '%-14s: %s\n' "Free" "${FREE:-Unknown}"
 printf '%-14s: %s\n' "Type" "$TYPE"
+printf '%-14s: %s\n' "Form Factor" "$FORM"
 printf '%-14s: %s\n' "Speed" "$SPEED"
 
 if [ "$MODE" = "slots" ]; then
@@ -110,7 +136,7 @@ if [ "$MODE" = "slots" ]; then
     tc_rule '-'
 
     awk -F': ' '
-    function reset() {size=loc=bank=type=detail=speed=cfg=mfg=serial=part=""}
+    function reset() {size=loc=bank=form=type=detail=speed=cfg=mfg=serial=part=""}
     function clean_type(v) {
         if (v == "" || v == "Unknown" || v == "Other" || v == "<OUT OF SPEC>") return "Unknown (SMBIOS)"
         return v
@@ -125,6 +151,7 @@ if [ "$MODE" = "slots" ]; then
         }
         printf "Size          : %s\n", (size != "" ? size : "Unknown")
         printf "Type          : %s\n", clean_type(type)
+        if (form != "" && form != "Unknown" && form != "Other") printf "Form Factor   : %s\n", form
         if (detail != "" && detail != "Unknown" && detail != "None") printf "Type Detail   : %s\n", detail
         if (speed != "" && speed != "Unknown") printf "Speed         : %s\n", speed
         if (cfg != "" && cfg != "Unknown") printf "Configured    : %s\n", cfg
@@ -136,6 +163,7 @@ if [ "$MODE" = "slots" ]; then
     /^Size:/ {size=$2}
     /^Locator:/ {loc=$2}
     /^Bank Locator:/ {bank=$2}
+    /^Form Factor:/ {form=$2}
     /^Type:/ {type=$2}
     /^Type Detail:/ {detail=$2}
     /^Speed:/ {speed=$2}
