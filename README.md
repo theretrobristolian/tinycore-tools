@@ -137,26 +137,32 @@ Raw `iperf3` remains available for advanced testing.
 
 Copy the contents of `output/ipxe/` to your web server, preserving the `x86` and `amd64` directories.
 
+The following is the canonical iPXE configuration used by the project and is also emitted by `build.sh` after a successful build:
+
 ```ipxe
 :tiny-core
 echo Booting TinyCore Tools...
 
 iseq ${buildarch} x86_64 && goto tiny-core-amd64 ||
-iseq ${buildarch} x86    && goto tiny-core-x86   ||
-iseq ${buildarch} i386   && goto tiny-core-x86   ||
+iseq ${buildarch} x86 && goto tiny-core-x86 ||
+iseq ${buildarch} i386 && goto tiny-core-x86 ||
 goto failed
 
 :tiny-core-x86
 kernel ${base-url}livecd/tiny-core/x86/vmlinuz quiet loglevel=3 || goto failed
-initrd ${base-url}livecd/tiny-core/x86/core.gz                    || goto failed
-initrd ${base-url}livecd/tiny-core/x86/tools.gz                   || goto failed
-boot                                                               || goto failed
+initrd ${base-url}livecd/tiny-core/x86/core.gz || goto failed
+initrd ${base-url}livecd/tiny-core/x86/tools.gz || goto failed
+console
+boot || goto failed
 
 :tiny-core-amd64
-kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 quiet || goto failed
-initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz    || goto failed
-boot                                                        || goto failed
+kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 quiet loglevel=3 || goto failed
+initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz || goto failed
+console
+boot || goto failed
 ```
+
+Both architectures use `quiet loglevel=3` to keep normal Linux startup noise to a minimum. The iPXE `console` command clears the download/status output immediately before handing control to the kernel, giving a cleaner transition into TinyCore Tools while still leaving iPXE errors visible if loading fails.
 
 The x86 build keeps the pristine Tiny Core `core.gz` and loads the tools as a separate initramfs. The amd64/CorePure64 build uses the proven merged-initramfs UEFI path.
 
