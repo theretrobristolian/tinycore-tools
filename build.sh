@@ -394,24 +394,26 @@ echo
 echo "Architecture-aware iPXE example:"
 cat <<'EOF'
 
-  :tiny-core
-  echo Booting TinyCore Tools...
+:tiny-core
+echo Booting TinyCore Tools...
 
-  iseq ${buildarch} x86_64 && goto tiny-core-amd64 ||
-  iseq ${buildarch} x86    && goto tiny-core-x86   ||
-  iseq ${buildarch} i386   && goto tiny-core-x86   ||
-  goto failed
+iseq ${buildarch} x86_64 && goto tiny-core-amd64 ||
+iseq ${buildarch} x86 && goto tiny-core-x86 ||
+iseq ${buildarch} i386 && goto tiny-core-x86 ||
+goto failed
 
-  :tiny-core-x86
-  kernel ${base-url}livecd/tiny-core/x86/vmlinuz quiet loglevel=3 || goto failed
-  initrd ${base-url}livecd/tiny-core/x86/core.gz                    || goto failed
-  initrd ${base-url}livecd/tiny-core/x86/tools.gz                   || goto failed
-  boot                                                               || goto failed
+:tiny-core-x86
+kernel ${base-url}livecd/tiny-core/x86/vmlinuz quiet loglevel=3 || goto failed
+initrd ${base-url}livecd/tiny-core/x86/core.gz || goto failed
+initrd ${base-url}livecd/tiny-core/x86/tools.gz || goto failed
+console
+boot || goto failed
 
-  :tiny-core-amd64
-  kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 quiet || goto failed
-  initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz    || goto failed
-  boot                                                        || goto failed
+:tiny-core-amd64
+kernel ${base-url}livecd/tiny-core/amd64/vmlinuz64 quiet loglevel=3 || goto failed
+initrd ${base-url}livecd/tiny-core/amd64/corepure64.gz || goto failed
+console
+boot || goto failed
 EOF
 
 echo
