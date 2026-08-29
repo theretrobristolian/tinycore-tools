@@ -35,35 +35,73 @@ printf '%s\n' "$DMI" | awk '
     seen=1
     next
 }
-seen && /^[[:space:]]*(Size|Locator|Bank Locator|Type|Speed|Configured Memory Speed|Manufacturer|Serial Number|Part Number):/ {
+seen && /^[[:space:]]*(Size|Locator|Bank Locator|Type|Type Detail|Speed|Configured Memory Speed|Manufacturer|Serial Number|Part Number):/ {
     sub(/^[[:space:]]*/, "")
     print
 }
 END { if (seen) print "---" }
 ' > "$TMP"
 
-TOTAL_KB="$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo)"
-TOTAL_MB=$((TOTAL_KB / 1024))
-TOTAL_GB="$(awk -v mb="$TOTAL_MB" 'BEGIN {printf "%.1f GB", mb/1024}')"
+# Linux-usable memory. This is normally slightly lower than the physical DIMM
+# total because firmware, graphics and other hardware may reserve some RAM.
+USABLE_KB="$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo)"
+USABLE_MB=$((USABLE_KB / 1024))
+USABLE_GB="$(awk -v mb="$USABLE_MB" 'BEGIN {printf "%.1f GB", mb/1024}')"
+
+# Physical installed memory from SMBIOS Type 17 records. Sum populated DIMMs
+# instead of using /proc/meminfo so an 8 GB module is reported as 8 GB rather
+# than (for example) 7.7 GB usable.
+INSTALLED_MB="$(awk -F': ' '
+/^Size:/ {
+    value=$2
+    if (value ~ /No Module Installed|Not Installed|Unknown|None/) next
+    split(value, a, " ")
+    n=a[1]+0
+    unit=a[2]
+    if (unit == "GB") n=n*1024
+    else if (unit == "kB" || unit == "KB") n=n/1024
+    total+=n
+}
+END {printf "%.0f", total+0}
+' "$TMP")"
+
+if [ "$INSTALLED_MB" -gt 0 ] 2>/dev/null; then
+    if [ $((INSTALLED_MB % 1024)) -eq 0 ]; then
+        INSTALLED="$((INSTALLED_MB / 1024)) GB"
+    else
+        INSTALLED="$(awk -v mb="$INSTALLED_MB" 'BEGIN {printf "%.1f GB", mb/1024}')"
+    fi
+else
+    INSTALLED="Unknown"
+fi
+
 SLOTS="$(grep -c '^Locator:' "$TMP" 2>/dev/null || true)"
 USED="$(awk -F': ' '/^Size:/ && $2 !~ /No Module Installed|Not Installed|Unknown|None/ {n++} END {print n+0}' "$TMP")"
 FREE=$((SLOTS - USED))
 [ "$FREE" -lt 0 ] && FREE=0
-TYPE="$(awk -F': ' '/^Type:/ && $2 !~ /Unknown|Other/ {print $2; exit}' "$TMP")"
-SPEED="$(awk -F': ' '/^Configured Memory Speed:/ && $2 !~ /Unknown|0 MT\/s/ {print $2; exit}' "$TMP")"
-[ -n "$SPEED" ] || SPEED="$(awk -F': ' '/^Speed:/ && $2 !~ /Unknown|0 MT\/s/ {print $2; exit}' "$TMP")"
+
+# Some firmware/dmidecode combinations expose a valid SMBIOS record but print
+# '<OUT OF SPEC>' for a memory type value they do not recognise. Do not present
+# that implementation detail as though it were the RAM type.
+TYPE="$(awk -F': ' '/^Type:/ && $2 !~ /Unknown|Other|<OUT OF SPEC>/ {print $2; exit}' "$TMP")"
+[ -n "$TYPE" ] || TYPE="Unknown (SMBIOS)"
+
+SPEED="$(awk -F': ' '/^Configured Memory Speed:/ && $2 !~ /Unknown|0 MT\/s|0 MHz/ {print $2; exit}' "$TMP")"
+[ -n "$SPEED" ] || SPEED="$(awk -F': ' '/^Speed:/ && $2 !~ /Unknown|0 MT\/s|0 MHz/ {print $2; exit}' "$TMP")"
+[ -n "$SPEED" ] || SPEED="Unknown"
 
 echo
 tc_rule '='
 tc_center "TinyCore Tools - Memory Information"
 tc_rule '='
 echo
-printf '%-14s: %s\n' "Installed" "$TOTAL_GB"
+printf '%-14s: %s\n' "Installed" "$INSTALLED"
+printf '%-14s: %s\n' "Usable" "$USABLE_GB"
 printf '%-14s: %s\n' "Slots" "${SLOTS:-Unknown}"
 printf '%-14s: %s\n' "Used" "${USED:-Unknown}"
 printf '%-14s: %s\n' "Free" "${FREE:-Unknown}"
-printf '%-14s: %s\n' "Type" "${TYPE:-Unknown}"
-printf '%-14s: %s\n' "Speed" "${SPEED:-Unknown}"
+printf '%-14s: %s\n' "Type" "$TYPE"
+printf '%-14s: %s\n' "Speed" "$SPEED"
 
 if [ "$MODE" = "slots" ]; then
     echo
@@ -72,7 +110,11 @@ if [ "$MODE" = "slots" ]; then
     tc_rule '-'
 
     awk -F': ' '
-    function reset() {size=loc=bank=type=speed=cfg=mfg=serial=part=""}
+    function reset() {size=loc=bank=type=detail=speed=cfg=mfg=serial=part=""}
+    function clean_type(v) {
+        if (v == "" || v == "Unknown" || v == "Other" || v == "<OUT OF SPEC>") return "Unknown (SMBIOS)"
+        return v
+    }
     function show() {
         if (loc == "") return
         printf "\nSlot          : %s\n", loc
@@ -82,9 +124,10 @@ if [ "$MODE" = "slots" ]; then
             return
         }
         printf "Size          : %s\n", (size != "" ? size : "Unknown")
-        printf "Type          : %s\n", (type != "" ? type : "Unknown")
-        if (speed != "") printf "Speed         : %s\n", speed
-        if (cfg != "") printf "Configured    : %s\n", cfg
+        printf "Type          : %s\n", clean_type(type)
+        if (detail != "" && detail != "Unknown" && detail != "None") printf "Type Detail   : %s\n", detail
+        if (speed != "" && speed != "Unknown") printf "Speed         : %s\n", speed
+        if (cfg != "" && cfg != "Unknown") printf "Configured    : %s\n", cfg
         if (mfg != "" && mfg != "Unknown" && mfg != "Not Specified") printf "Manufacturer  : %s\n", mfg
         if (part != "" && part != "Unknown" && part != "Not Specified") printf "Part Number   : %s\n", part
         if (serial != "" && serial != "Unknown" && serial != "Not Specified" && serial != "00000000") printf "Serial        : %s\n", serial
@@ -94,6 +137,7 @@ if [ "$MODE" = "slots" ]; then
     /^Locator:/ {loc=$2}
     /^Bank Locator:/ {bank=$2}
     /^Type:/ {type=$2}
+    /^Type Detail:/ {detail=$2}
     /^Speed:/ {speed=$2}
     /^Configured Memory Speed:/ {cfg=$2}
     /^Manufacturer:/ {mfg=$2}
